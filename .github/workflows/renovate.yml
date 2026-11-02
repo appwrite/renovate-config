@@ -28,6 +28,9 @@ jobs:
   renovate:
     runs-on: ubuntu-latest
     timeout-minutes: 300
+    # The app credentials live only in this environment, which deploys from main alone,
+    # so a workflow changed on another branch cannot read them.
+    environment: renovate
     steps:
       # The app token, not GITHUB_TOKEN, so Renovate's PRs trigger CI in each repository.
       - name: generate app token
