@@ -1,0 +1,8 @@
+{
+  "$schema": "https://docs.renovatebot.com/renovate-global-schema.json",
+  "platform": "github",
+  "autodiscover": true,
+  "autodiscoverFilter": ["appwrite/*", "!appwrite/sdk-for-*", "!appwrite/sdk-generator"],
+  "inheritConfig": true,
+  "allowedCommands": ["^./scripts/update-lockfiles\\.sh renovate$"]
+}
