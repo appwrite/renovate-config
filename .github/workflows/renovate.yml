@@ -1,0 +1,64 @@
+name: renovate
+
+on:
+  schedule:
+    - cron: "0 6 * * *" # Daily 06:00 UTC
+  workflow_dispatch:
+    inputs:
+      dryRun:
+        description: "Dry run (log what would change, open no PRs)"
+        type: boolean
+        default: false
+      debug:
+        description: "Enable Renovate debug logging"
+        type: boolean
+        default: false
+      repositories:
+        description: "Comma-separated owner/repo list to run instead of autodiscover"
+        type: string
+        default: ""
+
+permissions:
+  contents: read
+
+concurrency:
+  group: renovate
+
+jobs:
+  renovate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 300
+    steps:
+      # The app token, not GITHUB_TOKEN, so Renovate's PRs trigger CI in each repository.
+      - name: generate app token
+        id: app-token
+        uses: actions/create-github-app-token@64ab729a6294000f5aa4a4bc0b73d1f32bc45510 # v3.3.0
+        with:
+          client-id: ${{ vars.RENOVATE_APP_CLIENT_ID }}
+          private-key: ${{ secrets.RENOVATE_APP_PRIVATE_KEY }}
+          owner: appwrite
+
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: enable dry run
+        if: inputs.dryRun
+        run: echo "RENOVATE_DRY_RUN=full" >> "$GITHUB_ENV"
+
+      - name: enable debug logging
+        if: inputs.debug
+        run: echo "LOG_LEVEL=debug" >> "$GITHUB_ENV"
+
+      - name: target selected repositories
+        if: inputs.repositories != ''
+        env:
+          REPOSITORIES: ${{ inputs.repositories }}
+        run: |
+          echo "RENOVATE_AUTODISCOVER=false" >> "$GITHUB_ENV"
+          echo "RENOVATE_REPOSITORIES=$REPOSITORIES" >> "$GITHUB_ENV"
+
+      - name: renovate
+        uses: renovatebot/github-action@1c0cf989c02653fba0efe7ca5772338860ca71dc # v46.3.12
+        with:
+          configurationFile: global.json
+          renovate-version: 44.202.1
+          token: ${{ steps.app-token.outputs.token }}
