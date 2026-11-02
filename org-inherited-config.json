@@ -1,0 +1,7 @@
+{
+  "$schema": "https://docs.renovatebot.com/renovate-schema.json",
+  "description": "Applied by the Mend Renovate app to every repository in the org. Repositories run without an onboarding PR; a repository's own renovate.json is merged on top.",
+  "extends": ["github>appwrite/renovate-config"],
+  "onboarding": false,
+  "requireConfig": "optional"
+}

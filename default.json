@@ -1,0 +1,19 @@
+{
+  "$schema": "https://docs.renovatebot.com/renovate-schema.json",
+  "description": "Appwrite shared Renovate preset. Renovate owns dependency PRs; Dependabot only raises alerts.",
+  "extends": [
+    "config:recommended",
+    "helpers:pinGitHubActionDigests",
+    "group:allNonMajor",
+    "schedule:weekly",
+    ":maintainLockFilesWeekly",
+    ":semanticCommits"
+  ],
+  "labels": ["dependencies"],
+  "minimumReleaseAge": "7 days",
+  "osvVulnerabilityAlerts": true,
+  "vulnerabilityAlerts": {
+    "enabled": true,
+    "labels": ["dependencies", "security"]
+  }
+}
