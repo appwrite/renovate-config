@@ -74,7 +74,7 @@ jobs:
               exit 1
             fi
             jq -cn --arg owner "$owners" --arg repositories "$REPOSITORIES" \
-              '[{owner: $owner, repositories: $repositories}]' > chunks.json
+              '[{owner: $owner, label: "\($owner) manual", repositories: $repositories}]' > chunks.json
           else
             for owner in appwrite appwrite-labs; do
               if [ "$owner" = appwrite ]; then token="$APPWRITE_TOKEN"; else token="$LABS_TOKEN"; fi
@@ -89,14 +89,19 @@ jobs:
                     | select(.name as $name | ($excluded | split(" ") | index($name)) | not)'
             done | jq -cs --argjson size "$CHUNK" 'group_by(.owner) | map(
                 [.[].name] as $names
-                | [range(0; $names | length; $size) as $i
-                   | {owner: .[0].owner, repositories: ($names[$i:$i + $size] | join(","))}]
+                | .[0].owner as $owner
+                | (($names | length) + $size - 1) / $size | floor as $total
+                | [range(0; $total) as $n
+                   | {owner: $owner,
+                      label: "\($owner) \($n + 1)/\($total)",
+                      repositories: ($names[$n * $size:($n + 1) * $size] | join(","))}]
               ) | add // []' > chunks.json
           fi
-          jq -r '.[] | "\(.owner): \(.repositories | split(",") | length) repositories"' chunks.json
+          jq -r '.[] | "\(.label): \(.repositories | split(",") | length) repositories"' chunks.json
           echo "chunks=$(cat chunks.json)" >> "$GITHUB_OUTPUT"
 
   renovate:
+    name: renovate ${{ matrix.chunk.label }}
     needs: plan
     if: needs.plan.outputs.chunks != '[]'
     runs-on: ubuntu-latest
