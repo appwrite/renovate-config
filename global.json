@@ -1,6 +1,9 @@
 {
   "$schema": "https://docs.renovatebot.com/renovate-global-schema.json",
   "platform": "github",
+  "extends": ["github>appwrite/renovate-config"],
+  "onboarding": false,
+  "requireConfig": "optional",
   "inheritConfig": true,
   "allowedCommands": ["^./scripts/update-lockfiles\\.sh renovate$"]
 }
