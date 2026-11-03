@@ -35,6 +35,9 @@ env:
   # Orgs the runner covers. utopia-php has the app on selected repositories only: the
   # packages absorbed into appwrite/appwrite are split mirrors and must not get PRs.
   OWNERS: appwrite appwrite-labs open-runtimes utopia-php
+  # Forks are skipped unless listed here; each opts in with forkProcessing in its renovate.json.
+  FORKS: >-
+    appwrite/grafana-oncall
 
 jobs:
   # An app token lives one hour, so the repositories are split into chunks that each
@@ -114,8 +117,9 @@ jobs:
                 continue
               fi
               GH_TOKEN="$token" gh api --paginate /installation/repositories \
-                --jq ".repositories[] | select((.archived or .fork) | not) | .full_name" \
-                | jq -R --arg owner "$owner" --arg excluded "$EXCLUDED" '{owner: $owner, name: .}
+                --jq ".repositories[] | select(.archived | not) | [.full_name, .fork] | @tsv" \
+                | jq -R --arg owner "$owner" --arg excluded "$EXCLUDED" --arg forks "$FORKS" 'split("\t") | {owner: $owner, name: .[0], fork: (.[1] == "true")}
+                    | select((.fork | not) or (.name as $name | $forks | split(" ") | index($name)))
                     | select((.name | split("/")[1] | startswith("sdk-for-")) | not)
                     | select(.name as $name | ($excluded | split(" ") | index($name)) | not)'
             done | jq -cs --argjson size "$CHUNK" 'group_by(.owner) | map(
