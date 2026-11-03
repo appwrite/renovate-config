@@ -28,6 +28,7 @@ Each repository also gets a Dependency Dashboard issue listing pending and rate-
 | `.github/scripts/repositories.sh` | The repositories Renovate covers: exclusions, forks and split mirrors. Shared by both workflows. |
 | `.github/scripts/automerge.sh` | The auto-merge decision for one org or one PR. |
 | `.github/workflows/validate.yml` | Validates the config files on every PR. |
+| `.github/workflows/verify.yml` | Reusable workflow that installs, builds and tests a repository without CI of its own. |
 
 ## How it runs
 
@@ -51,12 +52,52 @@ Actions, then **renovate**, then **Run workflow**:
 The `automerge` workflow runs every 30 minutes and merges a Renovate PR only when CI passed and someone approved it. Every condition must hold for the PR's current head commit:
 
 1. The PR is authored by `renovate-appwrite[bot]`, open, not a draft, has no conflicts, and its repository is covered by the runner (the same exclusions, forks and split mirrors as `plan`).
-2. CI passed: at least one check run or commit status exists (a repository without CI never auto-merges), no check run is pending, every check run concluded success, skipped or neutral, and the combined commit status is success. Review bot check runs (Hansi, Tenki) are verdicts, not CI, so they are left out of this step and a non-S Hansi tier does not block a maintainer's approval.
+2. CI passed: at least one check run or commit status exists (a repository without CI never auto-merges; skipped check runs and the verify workflow's `detect projects` job do not count), no check run is pending, every check run concluded success, skipped or neutral, and the combined commit status is success. Review bot check runs (Hansi, Tenki) are verdicts, not CI, so they are left out of this step and a non-S Hansi tier does not block a maintainer's approval.
 3. It is approved: an `APPROVED` review on the head commit from the review bot (`appwrite[bot]`, formerly `hansi-codes[bot]`) or from a user with write, maintain or admin access, or the review bot's `Hansi` check reporting Tier S on the head commit. No reviewer's latest review requests changes.
 
 It then merges with the org's app token, squashing if the repository and its branch rulesets allow it, else with a merge commit, else by rebase, and passes `--match-head-commit` so a push in between stops the merge. Branch protection still applies: a refused merge is logged as a warning and retried on the next run. Every PR gets one log line with the decision and the reason.
 
 To check without merging, run **automerge** by hand with **dryRun**. **repositories** limits the run to a comma-separated list of repositories. Locally, `DRY_RUN=true .github/scripts/automerge.sh pr <owner/name> <number>` prints the decision for one PR with your own `gh` login, without the repository coverage check.
+
+## Verifying repositories without CI
+
+A repository with no checks never auto-merges. If it has no CI of its own, add `.github/workflows/verify.yml` to it (use the default branch's name if it is not `main`):
+
+```yaml
+name: verify
+on:
+  pull_request:
+  push:
+    branches: [main]
+permissions:
+  contents: read
+jobs:
+  verify:
+    uses: appwrite/renovate-config/.github/workflows/verify.yml@main
+```
+
+It finds every project in the repository from its tracked manifests and runs one `build <directory>` job per project directory:
+
+| Project | Install | Then |
+| --- | --- | --- |
+| `package.json` | `npm ci`, `pnpm install --frozen-lockfile`, `yarn install --frozen-lockfile` / `--immutable` or `bun install --frozen-lockfile`, from `packageManager` or the lockfile; `npm install` when there is no lockfile | `run build` and `run test` when the scripts exist |
+| `composer.json` | `composer install` | `composer test` when the script exists |
+| `uv.lock` | `uv sync --locked` | `pytest` when there are `test_*.py` or `*_test.py` files |
+| `requirements.txt`, `pyproject.toml` | `pip install -r requirements.txt` / `pip install .` | the same |
+| `go.mod` | | `go build ./... && go vet ./...` |
+| `Cargo.toml` | | `cargo build` |
+| `pubspec.yaml` | `dart pub get`, or `flutter pub get` for Flutter apps | |
+
+Node defaults to 24 and Python to 3.13 unless `.nvmrc`, `.node-version`, `.python-version` or `requires-python` say otherwise. Workspace members without their own lockfile are left to the workspace root. Swift, Gradle, Ruby, Maven, Deno and .NET projects are skipped with a notice.
+
+To choose the projects yourself, pass `directories` (space or newline separated, `.` is the root):
+
+```yaml
+    with:
+      directories: server-side-rendering example-blog
+```
+
+When nothing is found the `build` jobs are skipped and only `detect projects` runs, which auto-merge does not count, so the repository still counts as having no CI instead of passing on nothing. The jobs check out with a read-only `GITHUB_TOKEN` and receive no secrets, because they run dependency install scripts from the PR.
 
 ## Per-repository settings
 

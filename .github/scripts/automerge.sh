@@ -17,6 +17,8 @@ BOT_APPS='appwrite hansi-codes'
 BOT_CHECK='Hansi'
 # Review apps whose check runs are verdicts, not CI: a maintainer's approval stands even when one of them fails.
 REVIEW_APPS='appwrite hansi-codes tenki-reviewer'
+# The verify workflow's detection job: it passes even when it finds nothing to build.
+VERIFY_DETECT='detect projects'
 
 here=$(dirname "$0")
 dry=${DRY_RUN:-false}
@@ -76,7 +78,8 @@ pr() {
   runs=$(gh api --paginate --slurp "repos/$repository/commits/$sha/check-runs?per_page=100" | jq '[.[].check_runs[]]')
   statuses=$(gh api "repos/$repository/commits/$sha/status")
   checks=$(jq --arg apps "$REVIEW_APPS" '[.[] | select(.app.slug as $slug | $apps | split(" ") | index($slug) | not)]' <<< "$runs")
-  ci=$(($(jq 'length' <<< "$checks") + $(jq '.total_count' <<< "$statuses")))
+  # Skipped checks and verify's detection ran nothing, so they do not show that CI exists.
+  ci=$(($(jq --arg detect "$VERIFY_DETECT" '[.[] | select(.conclusion != "skipped" and .name != $detect and (.name | endswith(" / " + $detect) | not))] | length' <<< "$checks") + $(jq '.total_count' <<< "$statuses")))
   pending=$(jq -r '[.[] | select(.status != "completed") | .name] | if length > 3 then "\(length) checks, including \(.[:3] | join(", "))" else join(", ") end' <<< "$checks")
   unsuccessful=$(jq -r '[.[] | select(.status == "completed" and (.conclusion as $c | ["success", "skipped", "neutral"] | index($c) | not)) | "\(.name) (\(.conclusion))"] | join(", ")' <<< "$checks")
   status=$(jq -r 'if .total_count == 0 then "success" else .state end' <<< "$statuses")
