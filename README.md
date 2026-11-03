@@ -51,7 +51,7 @@ Actions, then **renovate**, then **Run workflow**:
 The `automerge` workflow runs every 30 minutes and merges a Renovate PR only when CI passed and someone approved it. Every condition must hold for the PR's current head commit:
 
 1. The PR is authored by `renovate-appwrite[bot]`, open, not a draft, has no conflicts, and its repository is covered by the runner (the same exclusions, forks and split mirrors as `plan`).
-2. CI passed: at least one check run or commit status exists (a repository without CI never auto-merges), no check run is pending, every check run concluded success, skipped or neutral, and the combined commit status is success. Review bot check runs (Hansi, Tenki) do not count as CI.
+2. CI passed: at least one check run or commit status exists (a repository without CI never auto-merges), no check run is pending, every check run concluded success, skipped or neutral, and the combined commit status is success. Review bot check runs (Hansi, Tenki) are verdicts, not CI, so they are left out of this step and a non-S Hansi tier does not block a maintainer's approval.
 3. It is approved: an `APPROVED` review on the head commit from `appwrite[bot]` or from a user with write, maintain or admin access, or the review bot's `Hansi` check reporting Tier S on the head commit. No reviewer's latest review requests changes.
 
 It then merges with the org's app token, squashing if the repository and its branch rulesets allow it, else with a merge commit, else by rebase, and passes `--match-head-commit` so a push in between stops the merge. Branch protection still applies: a refused merge is logged as a warning and retried on the next run. Every PR gets one log line with the decision and the reason.

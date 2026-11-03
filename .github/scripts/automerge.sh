@@ -15,7 +15,7 @@ SEARCH_AUTHOR='app/renovate-appwrite'
 BOT='appwrite[bot]'
 BOT_APPS='appwrite hansi-codes'
 BOT_CHECK='Hansi'
-# Review apps whose check runs are verdicts, not CI, so they do not count as a repository having CI.
+# Review apps whose check runs are verdicts, not CI: a maintainer's approval stands even when one of them fails.
 REVIEW_APPS='appwrite hansi-codes tenki-reviewer'
 
 here=$(dirname "$0")
@@ -53,7 +53,7 @@ org() {
 
 pr() {
   local repository=$1 number=$2 log="$1#$2"
-  local pull sha runs statuses ci pending unsuccessful status reviews blocked approver login permission verdict method
+  local pull sha runs checks statuses ci pending unsuccessful status reviews blocked approver login permission verdict method
 
   pull=$(gh api "repos/$repository/pulls/$number")
   sha=$(jq -r '.head.sha' <<< "$pull")
@@ -75,10 +75,10 @@ pr() {
 
   runs=$(gh api --paginate --slurp "repos/$repository/commits/$sha/check-runs?per_page=100" | jq '[.[].check_runs[]]')
   statuses=$(gh api "repos/$repository/commits/$sha/status")
-  ci=$(jq --arg apps "$REVIEW_APPS" '[.[] | select(.app.slug as $slug | $apps | split(" ") | index($slug) | not)] | length' <<< "$runs")
-  ci=$((ci + $(jq '.total_count' <<< "$statuses")))
-  pending=$(jq -r '[.[] | select(.status != "completed") | .name] | if length > 3 then "\(length) checks, including \(.[:3] | join(", "))" else join(", ") end' <<< "$runs")
-  unsuccessful=$(jq -r '[.[] | select(.status == "completed" and (.conclusion as $c | ["success", "skipped", "neutral"] | index($c) | not)) | "\(.name) (\(.conclusion))"] | join(", ")' <<< "$runs")
+  checks=$(jq --arg apps "$REVIEW_APPS" '[.[] | select(.app.slug as $slug | $apps | split(" ") | index($slug) | not)]' <<< "$runs")
+  ci=$(($(jq 'length' <<< "$checks") + $(jq '.total_count' <<< "$statuses")))
+  pending=$(jq -r '[.[] | select(.status != "completed") | .name] | if length > 3 then "\(length) checks, including \(.[:3] | join(", "))" else join(", ") end' <<< "$checks")
+  unsuccessful=$(jq -r '[.[] | select(.status == "completed" and (.conclusion as $c | ["success", "skipped", "neutral"] | index($c) | not)) | "\(.name) (\(.conclusion))"] | join(", ")' <<< "$checks")
   status=$(jq -r 'if .total_count == 0 then "success" else .state end' <<< "$statuses")
 
   if [ "$ci" -eq 0 ]; then
