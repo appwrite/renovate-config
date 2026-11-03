@@ -5,11 +5,14 @@
     "config:recommended",
     "helpers:pinGitHubActionDigests",
     "group:allNonMajor",
-    "schedule:weekly",
-    ":maintainLockFilesWeekly",
     ":semanticCommits"
   ],
   "labels": ["dependencies"],
+  "schedule": ["* * * * 1"],
+  "lockFileMaintenance": {
+    "enabled": true,
+    "schedule": ["* * * * 1"]
+  },
   "minimumReleaseAge": "7 days",
   "osvVulnerabilityAlerts": true,
   "vulnerabilityAlerts": {
