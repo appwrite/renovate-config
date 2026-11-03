@@ -83,6 +83,10 @@ jobs:
                     if [ "$manifest" = Cargo.toml ] && member "$directory" Cargo.toml; then
                       continue
                     fi
+                    # A pyproject.toml that only configures tools is not a project.
+                    if [ "$manifest" = pyproject.toml ] && ! grep -qE '^\[(project|build-system)\]' "$path"; then
+                      continue
+                    fi
                     echo "$directory"
                   done | sort -u
             )
@@ -128,7 +132,8 @@ jobs:
         env:
           DIRECTORY: ${{ matrix.directory }}
         run: |
-          output() { echo "$1=$2" >> "$GITHUB_OUTPUT"; }
+          found=
+          output() { found=true; echo "$1=$2" >> "$GITHUB_OUTPUT"; }
 
           if [ -f package.json ]; then
             manager=$(jq -r '.packageManager // "" | sub("@.*"; "")' package.json)
@@ -183,7 +188,7 @@ jobs:
 
           if [ -f uv.lock ]; then
             output python uv
-          elif [ -f requirements.txt ] || grep -qs '^\[project\]' pyproject.toml; then
+          elif [ -f requirements.txt ] || grep -qsE '^\[(project|build-system)\]' pyproject.toml; then
             output python pip
             if [ -f .python-version ]; then
               output python-version-file "$DIRECTORY/.python-version"
@@ -216,6 +221,12 @@ jobs:
               echo "::notice::Skipping $DIRECTORY/$manifest: only JS, PHP, Python, Go, Rust and Dart projects are verified"
             fi
           done
+
+          # Passing here would make a directory with nothing to build count as CI.
+          if [ -z "$found" ]; then
+            echo "::error::$DIRECTORY has no project to verify"
+            exit 1
+          fi
 
       - uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413 # v6.1.0
         if: steps.inspect.outputs.node == 'pnpm'
@@ -315,7 +326,7 @@ jobs:
             if [ -f requirements.txt ]; then
               pip install -r requirements.txt
             fi
-            if grep -qs '^\[project\]' pyproject.toml; then
+            if grep -qsE '^\[(project|build-system)\]' pyproject.toml; then
               pip install .
             fi
             run() { pip install pytest && "$@"; }

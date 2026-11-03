@@ -83,14 +83,14 @@ It finds every project in the repository from its tracked manifests and runs one
 | `package.json` | `npm ci`, `pnpm install --frozen-lockfile`, `yarn install --frozen-lockfile` / `--immutable` or `bun install --frozen-lockfile`, from `packageManager` or the lockfile; `npm install` when there is no lockfile | `run build` and `run test` when the scripts exist |
 | `composer.json` | `composer install` | `composer test` when the script exists |
 | `uv.lock` | `uv sync --locked` | `pytest` when there are `test_*.py` or `*_test.py` files |
-| `requirements.txt`, `pyproject.toml` | `pip install -r requirements.txt` / `pip install .` | the same |
+| `requirements.txt`, `pyproject.toml` with `[project]` or `[build-system]` | `pip install -r requirements.txt` / `pip install .` | the same |
 | `go.mod` | | `go build ./... && go vet ./...` |
 | `Cargo.toml` | | `cargo build` |
 | `pubspec.yaml` | `dart pub get`, or `flutter pub get` for Flutter apps | |
 
 Node defaults to 24 and Python to 3.13 unless `.nvmrc`, `.node-version`, `.python-version` or `requires-python` say otherwise. Workspace members without their own lockfile are left to the workspace root. Swift, Gradle, Ruby, Maven, Deno and .NET projects are skipped with a notice.
 
-To choose the projects yourself, pass `directories` (space or newline separated, `.` is the root):
+To choose the projects yourself, pass `directories` (space or newline separated, `.` is the root). A listed directory with no supported project fails the check:
 
 ```yaml
     with:
