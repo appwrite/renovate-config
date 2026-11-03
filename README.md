@@ -61,7 +61,7 @@ To turn Renovate off for a repository, commit `{ "enabled": false }` as its `ren
 
 ## Excluded repositories
 
-- `utopia-php`: the app is installed on selected repositories only. Packages absorbed into `appwrite/appwrite/packages` have `utopia-php/<name>` repositories that are split mirrors, so they must never get Renovate PRs; their dependencies are updated in the monorepo. Add a repository to the installation only while it is still developed in `utopia-php`.
+- `utopia-php` split mirrors: the `plan` job reads `appwrite/appwrite/packages` and skips every matching `utopia-php/<name>`, whatever the app installation covers, and a manual run naming one is rejected. Packages absorbed into `appwrite/appwrite/packages` have `utopia-php/<name>` repositories that are split mirrors, so they must never get Renovate PRs; their dependencies are updated in the monorepo. Add a repository to the installation only while it is still developed in `utopia-php`.
 
 - `appwrite/sdk-for-*`: generated SDKs. Their dependencies are updated in `appwrite/sdk-generator` templates.
 - `appwrite/sdk-generator`, `appwrite-labs/cluster-configuration-generator`, `appwrite-labs/application-configuration`: still run Renovate from their own workflows. To move one here, delete its workflow and remove it from `EXCLUDED` in `.github/workflows/renovate.yml`.

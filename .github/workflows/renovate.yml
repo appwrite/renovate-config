@@ -93,7 +93,20 @@ jobs:
           RUNTIMES_TOKEN: ${{ steps.runtimes.outputs.token }}
           UTOPIA_TOKEN: ${{ steps.utopia.outputs.token }}
         run: |
+          # Packages absorbed into appwrite/appwrite keep a utopia-php/<name> repository that
+          # bin/monorepo split pushes to; a PR there would be overwritten, so never process one.
+          if ! mirrors=$(GH_TOKEN="$APPWRITE_TOKEN" gh api repos/appwrite/appwrite/contents/packages \
+            --jq '[.[] | select(.type == "dir") | "utopia-php/\(.name)"] | join(" ")'); then
+            echo "::error::could not list appwrite/appwrite packages, so utopia-php mirrors cannot be excluded"
+            exit 1
+          fi
+          excluded="$EXCLUDED $mirrors"
           if [ -n "$REPOSITORIES" ]; then
+            for repository in $(echo "$REPOSITORIES" | tr ',' ' '); do
+              case " $mirrors " in
+                *" $repository "*) echo "::error::$repository is a split mirror of appwrite/appwrite/packages"; exit 1 ;;
+              esac
+            done
             owners=$(jq -rn --arg repositories "$REPOSITORIES" '$repositories | split(",") | map(split("/")[0]) | unique | join(" ")')
             case "$owners" in
               *" "*) echo "::error::repositories must all belong to one org (got: $owners)"; exit 1 ;;
@@ -118,7 +131,7 @@ jobs:
               fi
               GH_TOKEN="$token" gh api --paginate /installation/repositories \
                 --jq ".repositories[] | select(.archived | not) | [.full_name, .fork] | @tsv" \
-                | jq -R --arg owner "$owner" --arg excluded "$EXCLUDED" --arg forks "$FORKS" 'split("\t") | {owner: $owner, name: .[0], fork: (.[1] == "true")}
+                | jq -R --arg owner "$owner" --arg excluded "$excluded" --arg forks "$FORKS" 'split("\t") | {owner: $owner, name: .[0], fork: (.[1] == "true")}
                     | select((.fork | not) or (.name as $name | $forks | split(" ") | index($name)))
                     | select((.name | split("/")[1] | startswith("sdk-for-")) | not)
                     | select(.name as $name | ($excluded | split(" ") | index($name)) | not)'
@@ -133,6 +146,7 @@ jobs:
               ) | add // []' > chunks.json
           fi
           jq -r '.[] | "\(.label): \(.repositories | split(",") | length) repositories"' chunks.json
+          echo "Skipped split mirrors: $mirrors"
           echo "chunks=$(cat chunks.json)" >> "$GITHUB_OUTPUT"
 
   renovate:
