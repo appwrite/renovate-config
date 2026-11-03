@@ -66,8 +66,13 @@ jobs:
           LABS_TOKEN: ${{ steps.labs.outputs.token }}
         run: |
           if [ -n "$REPOSITORIES" ]; then
-            jq -cn --arg repositories "$REPOSITORIES" \
-              '[{owner: ($repositories | split("/")[0]), repositories: $repositories}]' > chunks.json
+            owners=$(jq -rn --arg repositories "$REPOSITORIES" '$repositories | split(",") | map(split("/")[0]) | unique | join(" ")')
+            if [ "$owners" != appwrite ] && [ "$owners" != appwrite-labs ]; then
+              echo "::error::repositories must all belong to appwrite or all to appwrite-labs (got: $owners)"
+              exit 1
+            fi
+            jq -cn --arg owner "$owners" --arg repositories "$REPOSITORIES" \
+              '[{owner: $owner, repositories: $repositories}]' > chunks.json
           else
             for owner in appwrite appwrite-labs; do
               if [ "$owner" = appwrite ]; then token="$APPWRITE_TOKEN"; else token="$LABS_TOKEN"; fi
