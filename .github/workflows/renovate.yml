@@ -32,6 +32,9 @@ env:
     appwrite-labs/cluster-configuration-generator
     appwrite-labs/application-configuration
   CHUNK: 40
+  # Orgs the runner covers. utopia-php has the app on selected repositories only: the
+  # packages absorbed into appwrite/appwrite are split mirrors and must not get PRs.
+  OWNERS: appwrite appwrite-labs open-runtimes utopia-php
 
 jobs:
   # An app token lives one hour, so the repositories are split into chunks that each
@@ -60,24 +63,52 @@ jobs:
           private-key: ${{ secrets.RENOVATE_APP_PRIVATE_KEY }}
           owner: appwrite-labs
 
+      - name: generate open-runtimes token
+        id: runtimes
+        continue-on-error: true
+        uses: actions/create-github-app-token@64ab729a6294000f5aa4a4bc0b73d1f32bc45510 # v3.3.0
+        with:
+          client-id: ${{ vars.RENOVATE_APP_CLIENT_ID }}
+          private-key: ${{ secrets.RENOVATE_APP_PRIVATE_KEY }}
+          owner: open-runtimes
+
+      - name: generate utopia-php token
+        id: utopia
+        continue-on-error: true
+        uses: actions/create-github-app-token@64ab729a6294000f5aa4a4bc0b73d1f32bc45510 # v3.3.0
+        with:
+          client-id: ${{ vars.RENOVATE_APP_CLIENT_ID }}
+          private-key: ${{ secrets.RENOVATE_APP_PRIVATE_KEY }}
+          owner: utopia-php
+
       - name: split repositories into chunks
         id: chunks
         env:
           REPOSITORIES: ${{ inputs.repositories }}
           APPWRITE_TOKEN: ${{ steps.appwrite.outputs.token }}
           LABS_TOKEN: ${{ steps.labs.outputs.token }}
+          RUNTIMES_TOKEN: ${{ steps.runtimes.outputs.token }}
+          UTOPIA_TOKEN: ${{ steps.utopia.outputs.token }}
         run: |
           if [ -n "$REPOSITORIES" ]; then
             owners=$(jq -rn --arg repositories "$REPOSITORIES" '$repositories | split(",") | map(split("/")[0]) | unique | join(" ")')
-            if [ "$owners" != appwrite ] && [ "$owners" != appwrite-labs ]; then
-              echo "::error::repositories must all belong to appwrite or all to appwrite-labs (got: $owners)"
-              exit 1
-            fi
+            case "$owners" in
+              *" "*) echo "::error::repositories must all belong to one org (got: $owners)"; exit 1 ;;
+            esac
+            case " $OWNERS " in
+              *" $owners "*) ;;
+              *) echo "::error::repositories must all belong to one of: $OWNERS (got: $owners)"; exit 1 ;;
+            esac
             jq -cn --arg owner "$owners" --arg repositories "$REPOSITORIES" \
               '[{owner: $owner, label: "\($owner) manual", repositories: $repositories}]' > chunks.json
           else
-            for owner in appwrite appwrite-labs; do
-              if [ "$owner" = appwrite ]; then token="$APPWRITE_TOKEN"; else token="$LABS_TOKEN"; fi
+            for owner in $OWNERS; do
+              case "$owner" in
+                appwrite) token="$APPWRITE_TOKEN" ;;
+                appwrite-labs) token="$LABS_TOKEN" ;;
+                open-runtimes) token="$RUNTIMES_TOKEN" ;;
+                utopia-php) token="$UTOPIA_TOKEN" ;;
+              esac
               if [ -z "$token" ]; then
                 echo "::warning::renovate appwrite is not installed on $owner; skipping it" >&2
                 continue

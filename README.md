@@ -1,6 +1,6 @@
 # renovate-config
 
-Shared [Renovate](https://docs.renovatebot.com/) setup for the `appwrite` and `appwrite-labs` organizations. Renovate opens every dependency PR. Dependabot stays on for alerts only: the Security tab, the #security relay, and the alerts Renovate turns into fix PRs.
+Shared [Renovate](https://docs.renovatebot.com/) setup for the `appwrite`, `appwrite-labs`, `open-runtimes` and `utopia-php` organizations. Renovate opens every dependency PR. Dependabot stays on for alerts only: the Security tab, the #security relay, and the alerts Renovate turns into fix PRs.
 
 ## What repositories get
 
@@ -21,8 +21,8 @@ Each repository also gets a Dependency Dashboard issue listing pending and rate-
 | File | Purpose |
 | --- | --- |
 | `default.json` | The shared preset (`github>appwrite/renovate-config`). Change update policy here. |
-| `org-inherited-config.json` | Applied to every `appwrite` repository. Extends the preset and turns off onboarding PRs. `appwrite-labs/renovate-config` has the same file for that org. |
-| `global.json` | Runner settings: platform, `inheritConfig`, and the post-upgrade commands repositories may run. |
+| `org-inherited-config.json` | Org-level overrides for `appwrite` repositories (`appwrite-labs/renovate-config` has one for that org). The preset itself is applied to every org by `global.json`, so an org needs no `renovate-config` repository. |
+| `global.json` | Runner settings: extends the preset for every repository, turns off onboarding, enables `inheritConfig`, and lists the post-upgrade commands repositories may run. |
 | `.github/workflows/renovate.yml` | The runner. |
 | `.github/workflows/validate.yml` | Validates the config files on every PR. |
 
@@ -60,6 +60,8 @@ Add a `renovate.json` to the repository; it is merged on top of the shared confi
 To turn Renovate off for a repository, commit `{ "enabled": false }` as its `renovate.json`.
 
 ## Excluded repositories
+
+- `utopia-php`: the app is installed on selected repositories only. Packages absorbed into `appwrite/appwrite/packages` have `utopia-php/<name>` repositories that are split mirrors, so they must never get Renovate PRs; their dependencies are updated in the monorepo. Add a repository to the installation only while it is still developed in `utopia-php`.
 
 - `appwrite/sdk-for-*`: generated SDKs. Their dependencies are updated in `appwrite/sdk-generator` templates.
 - `appwrite/sdk-generator`, `appwrite-labs/cluster-configuration-generator`, `appwrite-labs/application-configuration`: still run Renovate from their own workflows. To move one here, delete its workflow and remove it from `EXCLUDED` in `.github/workflows/renovate.yml`.
