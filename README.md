@@ -1,12 +1,81 @@
 # renovate-config
 
-Shared [Renovate](https://docs.renovatebot.com/) configuration for the Appwrite organization. Renovate opens every dependency PR; Dependabot stays on only for alerts (Security tab, the #security relay, and the alerts Renovate reads for vulnerability fixes).
+Shared [Renovate](https://docs.renovatebot.com/) setup for the `appwrite` and `appwrite-labs` organizations. Renovate opens every dependency PR. Dependabot stays on for alerts only: the Security tab, the #security relay, and the alerts Renovate turns into fix PRs.
 
-- `default.json` is the preset: weekly grouped non-major updates, majors as separate PRs, a 7 day minimum release age, weekly lock file maintenance (picks up transitive fixes inside existing ranges), and vulnerability fixes from both GitHub alerts and OSV, which skip the schedule and release age.
-- `org-inherited-config.json` is applied by Renovate (`inheritConfig`) to every repository it runs on. It extends the preset and turns off onboarding, so a repository needs no `renovate.json` to be covered.
+## What repositories get
 
-`global.json` and `.github/workflows/renovate.yml` are the runner: a daily self-hosted Renovate using the `renovate appwrite` GitHub App (its credentials live in the `renovate` environment, deployable from `main` only). A plan job lists every repository the app is installed on in `appwrite` and `appwrite-labs` and splits them into chunks of 40, each run with its own app token because a token lasts one hour. Run it by hand from the Actions tab, with a dry run or a repository list for testing. Repositories that still run Renovate from their own workflow (`appwrite/sdk-generator`, `appwrite-labs/cluster-configuration-generator`, `appwrite-labs/application-configuration`) are excluded so they are not processed twice.
+Every repository the `renovate appwrite` GitHub App is installed on is covered without a `renovate.json` of its own.
 
-A repository that needs more (custom managers, ignored paths, extra rules) adds a `renovate.json`; it is merged on top of the inherited config. To turn Renovate off for a repository, commit a `renovate.json` with `{ "enabled": false }`.
+| Update | When | How it arrives |
+| --- | --- | --- |
+| Vulnerability fixes (GitHub alerts and [OSV](https://osv.dev/)) | As soon as a fix exists, ignoring the schedule and release age | One PR per package, labelled `security` |
+| Minor and patch updates | Weekly, once a release is 7 days old | One grouped PR, "all non-major dependencies" |
+| Major updates | Weekly, once a release is 7 days old | One PR per package |
+| Lock file maintenance | Weekly | One PR that refreshes the lock file, picking up transitive fixes inside existing ranges |
+| GitHub Actions | With the above | Pinned by commit digest |
 
-Generated SDK repositories (`sdk-for-*`) are updated through `appwrite/sdk-generator`, so the runner skips them and Renovate never edits generated code.
+Each repository also gets a Dependency Dashboard issue listing pending and rate-limited updates.
+
+## Files
+
+| File | Purpose |
+| --- | --- |
+| `default.json` | The shared preset (`github>appwrite/renovate-config`). Change update policy here. |
+| `org-inherited-config.json` | Applied to every `appwrite` repository. Extends the preset and turns off onboarding PRs. `appwrite-labs/renovate-config` has the same file for that org. |
+| `global.json` | Runner settings: platform, `inheritConfig`, and the post-upgrade commands repositories may run. |
+| `.github/workflows/renovate.yml` | The runner. |
+| `.github/workflows/validate.yml` | Validates the config files on every PR. |
+
+## How it runs
+
+The `renovate` workflow runs daily at 06:00 UTC:
+
+1. `plan` mints an app token per org, lists the repositories the app is installed on, drops archived repositories, forks and exclusions, and splits the rest into chunks of 40.
+2. `renovate <org> <n>/<total>` runs Renovate on one chunk with its own token. An app token lasts one hour, so chunks keep each job well inside it, and a job stops at 55 minutes.
+
+The app's client ID and private key live in the `renovate` environment, which only `main` can deploy to, so a workflow edited on another branch cannot read them. An org without the app installed is skipped with a warning.
+
+### Running it by hand
+
+Actions, then **renovate**, then **Run workflow**:
+
+- **dryRun** logs what Renovate would change and opens nothing.
+- **debug** turns on debug logging.
+- **repositories** runs a comma-separated list instead of every repository, for example `appwrite/console,appwrite/mcp`. All entries must belong to one org.
+
+## Per-repository settings
+
+Add a `renovate.json` to the repository; it is merged on top of the shared config.
+
+```json
+{
+  "$schema": "https://docs.renovatebot.com/renovate-schema.json",
+  "ignorePaths": ["examples/**"],
+  "packageRules": [
+    { "matchPackageNames": ["react", "react-dom"], "groupName": "react" }
+  ]
+}
+```
+
+To turn Renovate off for a repository, commit `{ "enabled": false }` as its `renovate.json`.
+
+## Excluded repositories
+
+- `appwrite/sdk-for-*`: generated SDKs. Their dependencies are updated in `appwrite/sdk-generator` templates.
+- `appwrite/sdk-generator`, `appwrite-labs/cluster-configuration-generator`, `appwrite-labs/application-configuration`: still run Renovate from their own workflows. To move one here, delete its workflow and remove it from `EXCLUDED` in `.github/workflows/renovate.yml`.
+
+## Changing the config
+
+Open a PR here. Validate locally with the same Renovate version the runner uses:
+
+```sh
+npx --yes --package renovate@44.202.1 -- renovate-config-validator --strict default.json org-inherited-config.json global.json
+```
+
+After merging, dispatch a dry run on one or two repositories before the next scheduled run.
+
+## Troubleshooting
+
+- **A PR says the lock file could not be updated.** The package manager failed inside Renovate, usually a peer dependency conflict or an outdated lock file. Fix it in that repository; Renovate retries on its next run.
+- **A repository gets no PRs.** Check that the app is installed on it, that it is not archived or excluded, and look for its name in the `plan` job log.
+- **`bad-credentials` near the end of a job.** The chunk took longer than the token lasts. Lower `CHUNK` in the workflow.
