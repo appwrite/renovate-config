@@ -14,7 +14,7 @@ on:
         type: boolean
         default: false
       repositories:
-        description: "Comma-separated owner/repo list to run instead of autodiscover"
+        description: "Comma-separated owner/repo list (one owner) to run instead of every installed repository"
         type: string
         default: ""
 
@@ -24,13 +24,81 @@ permissions:
 concurrency:
   group: renovate
 
+env:
+  # Generated SDKs are updated through sdk-generator. These repositories run Renovate from
+  # their own workflows, so they are skipped here to avoid processing them twice.
+  EXCLUDED: >-
+    appwrite/sdk-generator
+    appwrite-labs/cluster-configuration-generator
+    appwrite-labs/application-configuration
+  CHUNK: 40
+
 jobs:
-  renovate:
+  # An app token lives one hour, so the repositories are split into chunks that each
+  # run as their own job with a fresh token.
+  plan:
     runs-on: ubuntu-latest
-    timeout-minutes: 300
+    environment: renovate
+    outputs:
+      chunks: ${{ steps.chunks.outputs.chunks }}
+    steps:
+      - name: generate appwrite token
+        id: appwrite
+        uses: actions/create-github-app-token@64ab729a6294000f5aa4a4bc0b73d1f32bc45510 # v3.3.0
+        with:
+          client-id: ${{ vars.RENOVATE_APP_CLIENT_ID }}
+          private-key: ${{ secrets.RENOVATE_APP_PRIVATE_KEY }}
+          owner: appwrite
+
+      - name: generate appwrite-labs token
+        id: labs
+        uses: actions/create-github-app-token@64ab729a6294000f5aa4a4bc0b73d1f32bc45510 # v3.3.0
+        with:
+          client-id: ${{ vars.RENOVATE_APP_CLIENT_ID }}
+          private-key: ${{ secrets.RENOVATE_APP_PRIVATE_KEY }}
+          owner: appwrite-labs
+
+      - name: split repositories into chunks
+        id: chunks
+        env:
+          REPOSITORIES: ${{ inputs.repositories }}
+          APPWRITE_TOKEN: ${{ steps.appwrite.outputs.token }}
+          LABS_TOKEN: ${{ steps.labs.outputs.token }}
+        run: |
+          if [ -n "$REPOSITORIES" ]; then
+            jq -cn --arg repositories "$REPOSITORIES" \
+              '[{owner: ($repositories | split("/")[0]), repositories: $repositories}]' > chunks.json
+          else
+            for owner in appwrite appwrite-labs; do
+              if [ "$owner" = appwrite ]; then token="$APPWRITE_TOKEN"; else token="$LABS_TOKEN"; fi
+              GH_TOKEN="$token" gh api --paginate /installation/repositories \
+                --jq ".repositories[] | select((.archived or .fork) | not) | .full_name" \
+                | jq -R --arg owner "$owner" --arg excluded "$EXCLUDED" '{owner: $owner, name: .}
+                    | select((.name | split("/")[1] | startswith("sdk-for-")) | not)
+                    | select(.name as $name | ($excluded | split(" ") | index($name)) | not)'
+            done | jq -cs --argjson size "$CHUNK" 'group_by(.owner) | map(
+                [.[].name] as $names
+                | [range(0; $names | length; $size) as $i
+                   | {owner: .[0].owner, repositories: ($names[$i:$i + $size] | join(","))}]
+              ) | add // []' > chunks.json
+          fi
+          jq -r '.[] | "\(.owner): \(.repositories | split(",") | length) repositories"' chunks.json
+          echo "chunks=$(cat chunks.json)" >> "$GITHUB_OUTPUT"
+
+  renovate:
+    needs: plan
+    if: needs.plan.outputs.chunks != '[]'
+    runs-on: ubuntu-latest
+    # Stops before the job's app token expires.
+    timeout-minutes: 55
     # The app credentials live only in this environment, which deploys from main alone,
     # so a workflow changed on another branch cannot read them.
     environment: renovate
+    strategy:
+      fail-fast: false
+      max-parallel: 4
+      matrix:
+        chunk: ${{ fromJSON(needs.plan.outputs.chunks) }}
     steps:
       # The app token, not GITHUB_TOKEN, so Renovate's PRs trigger CI in each repository.
       - name: generate app token
@@ -39,7 +107,7 @@ jobs:
         with:
           client-id: ${{ vars.RENOVATE_APP_CLIENT_ID }}
           private-key: ${{ secrets.RENOVATE_APP_PRIVATE_KEY }}
-          owner: appwrite
+          owner: ${{ matrix.chunk.owner }}
 
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
@@ -51,17 +119,11 @@ jobs:
         if: inputs.debug
         run: echo "LOG_LEVEL=debug" >> "$GITHUB_ENV"
 
-      - name: target selected repositories
-        if: inputs.repositories != ''
-        env:
-          REPOSITORIES: ${{ inputs.repositories }}
-        run: |
-          echo "RENOVATE_AUTODISCOVER=false" >> "$GITHUB_ENV"
-          echo "RENOVATE_REPOSITORIES=$REPOSITORIES" >> "$GITHUB_ENV"
-
       - name: renovate
         uses: renovatebot/github-action@1c0cf989c02653fba0efe7ca5772338860ca71dc # v46.3.12
         with:
           configurationFile: global.json
           renovate-version: 44.202.1
           token: ${{ steps.app-token.outputs.token }}
+        env:
+          RENOVATE_REPOSITORIES: ${{ matrix.chunk.repositories }}
