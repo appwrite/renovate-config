@@ -1,0 +1,386 @@
+name: verify
+
+# Installs and builds every project in the calling repository, so repositories without CI of
+# their own get a check that Renovate PRs must pass before auto-merge. It runs PR code, including
+# dependency install scripts, so it gets a read-only token and no secrets.
+
+on:
+  workflow_call:
+    inputs:
+      directories:
+        description: "Project directories to verify instead of detecting them, separated by spaces or newlines; . is the repository root"
+        type: string
+        default: ""
+
+permissions:
+  contents: read
+
+jobs:
+  # The automerge script does not count this job as CI, so a repository where nothing is
+  # detected has no CI rather than a check that passes on nothing.
+  detect:
+    name: detect projects
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      directories: ${{ steps.detect.outputs.directories }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: detect projects
+        id: detect
+        env:
+          DIRECTORIES: ${{ inputs.directories }}
+        run: |
+          locked() {
+            local lockfile
+            for lockfile in package-lock.json npm-shrinkwrap.json pnpm-lock.yaml yarn.lock bun.lock bun.lockb; do
+              [ -f "$1/$lockfile" ] && return 0
+            done
+            return 1
+          }
+
+          # A package.json without a lockfile under a JS workspace root, or a crate under a
+          # Cargo workspace, is installed and built by that root.
+          member() {
+            local directory=$1 manifest=$2
+            while [ "$directory" != . ]; do
+              directory=$(dirname "$directory")
+              case "$manifest" in
+                package.json)
+                  if grep -qs '^packages:' "$directory/pnpm-workspace.yaml" || jq -e '.workspaces' "$directory/package.json" > /dev/null 2>&1; then
+                    return 0
+                  fi ;;
+                Cargo.toml)
+                  if grep -qs '^\[workspace\]' "$directory/Cargo.toml"; then
+                    return 0
+                  fi ;;
+              esac
+            done
+            return 1
+          }
+
+          if [ -n "$DIRECTORIES" ]; then
+            directories=$(tr -s ' \n' '\n' <<< "$DIRECTORIES" | sed -e '/^$/d' -e 's|/*$||' -e 's|^\./\(.\)|\1|')
+            for directory in $directories; do
+              if [ ! -d "$directory" ]; then
+                echo "::error::$directory is not a directory"
+                exit 1
+              fi
+            done
+          else
+            directories=$(
+              git ls-files | grep -vE '(^|/)(node_modules|vendor|\.[^/]+)/' \
+                | { grep -E '(^|/)(package\.json|composer\.json|pyproject\.toml|requirements\.txt|go\.mod|Cargo\.toml|pubspec\.yaml)$' || true; } \
+                | while read -r path; do
+                    directory=$(dirname "$path")
+                    manifest=$(basename "$path")
+                    if [ "$manifest" = package.json ] && ! locked "$directory" && member "$directory" package.json; then
+                      continue
+                    fi
+                    if [ "$manifest" = Cargo.toml ] && member "$directory" Cargo.toml; then
+                      continue
+                    fi
+                    # A pyproject.toml that only configures tools is not a project.
+                    if [ "$manifest" = pyproject.toml ] && ! grep -qE '^\[(project|build-system)\]' "$path"; then
+                      continue
+                    fi
+                    echo "$directory"
+                  done | sort -u
+            )
+            git ls-files | grep -vE '(^|/)(node_modules|vendor|\.[^/]+)/' \
+              | { grep -E '(^|/)(Package\.swift|settings\.gradle(\.kts)?|Gemfile|pom\.xml|deno\.jsonc?|[^/]+\.csproj)$' || true; } \
+              | while read -r path; do
+                  if ! grep -qxF "$(dirname "$path")" <<< "$directories"; then
+                    echo "::notice::Skipping $path: only JS, PHP, Python, Go, Rust and Dart projects are verified"
+                  fi
+                done
+          fi
+
+          json=$(sed '/^$/d' <<< "$directories" | jq -Rnc '[inputs]')
+          if [ "$json" = '[]' ]; then
+            echo "::notice::No projects found, so nothing is verified and this repository counts as having no CI"
+          elif [ "$(jq length <<< "$json")" -gt 256 ]; then
+            echo "::error::$(jq length <<< "$json") projects found, more than the 256 a matrix allows; pass directories"
+            exit 1
+          fi
+          echo "Projects: $json"
+          echo "directories=$json" >> "$GITHUB_OUTPUT"
+
+  build:
+    name: build ${{ matrix.directory }}
+    needs: detect
+    if: needs.detect.outputs.directories != '[]'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        directory: ${{ fromJSON(needs.detect.outputs.directories) }}
+    defaults:
+      run:
+        working-directory: ${{ matrix.directory }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: inspect
+        id: inspect
+        env:
+          DIRECTORY: ${{ matrix.directory }}
+        run: |
+          found=
+          output() { found=true; echo "$1=$2" >> "$GITHUB_OUTPUT"; }
+
+          if [ -f package.json ]; then
+            manager=$(jq -r '.packageManager // "" | sub("@.*"; "")' package.json)
+            if [ -z "$manager" ]; then
+              for candidate in pnpm-lock.yaml:pnpm bun.lock:bun bun.lockb:bun yarn.lock:yarn package-lock.json:npm npm-shrinkwrap.json:npm; do
+                if [ -f "${candidate%%:*}" ]; then
+                  manager=${candidate#*:}
+                  break
+                fi
+              done
+            fi
+            manager=${manager:-npm}
+            output node "$manager"
+
+            if [ "$manager" = pnpm ] && ! jq -e '.packageManager' package.json > /dev/null; then
+              # Without packageManager, the pnpm major that writes this lockfile format.
+              version=$(sed -n 's/^lockfileVersion: *//p' pnpm-lock.yaml 2>/dev/null | tr -d "'\"")
+              case "${version%%.*}" in
+                5) output pnpm 7 ;;
+                6) output pnpm 8 ;;
+                *) output pnpm 10 ;;
+              esac
+            fi
+            berry=
+            if [ "$manager" = yarn ] && { [ -f .yarnrc.yml ] || grep -qs '^__metadata:' yarn.lock; }; then
+              berry=true
+              output yarn berry
+            fi
+
+            for file in .nvmrc .node-version; do
+              if [ -f "$file" ]; then
+                output node-version-file "$DIRECTORY/$file"
+                break
+              fi
+            done
+            # setup-node caches npm, pnpm and Yarn 1; Yarn Berry needs corepack first.
+            lockfile=
+            case "$manager" in
+              npm) lockfile=$( [ -f npm-shrinkwrap.json ] && echo npm-shrinkwrap.json || echo package-lock.json ) ;;
+              pnpm) lockfile=pnpm-lock.yaml ;;
+              yarn) [ -n "$berry" ] || lockfile=yarn.lock ;;
+            esac
+            if [ -n "$lockfile" ] && [ -f "$lockfile" ]; then
+              output node-cache "$manager"
+              output node-lockfile "$DIRECTORY/$lockfile"
+            fi
+          fi
+
+          if [ -f composer.json ]; then
+            output php "$(cat .php-version 2>/dev/null || echo latest)"
+          fi
+
+          if [ -f uv.lock ]; then
+            output python uv
+          elif [ -f requirements.txt ] || grep -qsE '^\[(project|build-system)\]' pyproject.toml; then
+            output python pip
+            if [ -f .python-version ]; then
+              output python-version-file "$DIRECTORY/.python-version"
+            elif grep -qs '^requires-python' pyproject.toml; then
+              output python-version-file "$DIRECTORY/pyproject.toml"
+            fi
+          fi
+
+          if [ -f go.mod ]; then
+            output go true
+          fi
+
+          if [ -f Cargo.toml ]; then
+            output cargo true
+          fi
+
+          if [ -f pubspec.yaml ]; then
+            if grep -qE '^ +sdk: *flutter' pubspec.yaml; then
+              output dart flutter
+            elif grep -qE "^ +sdk: .*<3\.0\.0" pubspec.yaml; then
+              # Dart 3 refuses packages that cap the SDK below 3.0, so use the last Dart 2.
+              output dart 2.19.6
+            else
+              output dart stable
+            fi
+          fi
+
+          for manifest in Package.swift build.gradle build.gradle.kts Gemfile pom.xml; do
+            if [ -f "$manifest" ]; then
+              echo "::notice::Skipping $DIRECTORY/$manifest: only JS, PHP, Python, Go, Rust and Dart projects are verified"
+            fi
+          done
+
+          # Passing here would make a directory with nothing to build count as CI.
+          if [ -z "$found" ]; then
+            echo "::error::$DIRECTORY has no project to verify"
+            exit 1
+          fi
+
+      - uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413 # v6.1.0
+        if: steps.inspect.outputs.node == 'pnpm'
+        with:
+          version: ${{ steps.inspect.outputs.pnpm }}
+          package_json_file: ${{ matrix.directory }}/package.json
+
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        if: steps.inspect.outputs.node
+        with:
+          node-version: ${{ !steps.inspect.outputs.node-version-file && '24' || '' }}
+          node-version-file: ${{ steps.inspect.outputs.node-version-file }}
+          cache: ${{ steps.inspect.outputs.node-cache }}
+          cache-dependency-path: ${{ steps.inspect.outputs.node-lockfile }}
+          package-manager-cache: false
+
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
+        if: steps.inspect.outputs.node == 'bun'
+
+      - name: install, build and test (${{ steps.inspect.outputs.node }})
+        if: steps.inspect.outputs.node
+        env:
+          MANAGER: ${{ steps.inspect.outputs.node }}
+          YARN: ${{ steps.inspect.outputs.yarn }}
+        run: |
+          case "$MANAGER" in
+            npm)
+              if [ -f package-lock.json ] || [ -f npm-shrinkwrap.json ]; then
+                npm ci --no-audit --no-fund
+              else
+                echo "::notice::No lockfile, so dependencies are resolved with npm install"
+                npm install --no-audit --no-fund
+              fi ;;
+            pnpm) pnpm install --frozen-lockfile ;;
+            yarn)
+              if [ "$YARN" = berry ]; then
+                corepack enable
+                yarn install --immutable
+              else
+                yarn install --frozen-lockfile
+              fi ;;
+            bun) bun install --frozen-lockfile ;;
+            *) echo "::error::Unsupported package manager $MANAGER"; exit 1 ;;
+          esac
+
+          for script in build test; do
+            command=$(jq -r --arg script "$script" '.scripts[$script] // ""' package.json)
+            # npm init writes a test script that always fails.
+            if [ -z "$command" ] || [[ "$command" == *'no test specified'* ]]; then
+              echo "No $script script"
+              continue
+            fi
+            "$MANAGER" run "$script"
+          done
+
+      - uses: shivammathur/setup-php@eb7c497e18156a6bbabfef1d3a82760b9eda3962 # 2.40.0
+        if: steps.inspect.outputs.php
+        with:
+          php-version: ${{ steps.inspect.outputs.php }}
+          tools: composer
+          coverage: none
+
+      - name: install and test (composer)
+        if: steps.inspect.outputs.php
+        run: |
+          composer install --no-interaction --no-progress
+          if jq -e '.scripts.test' composer.json > /dev/null; then
+            composer test
+          else
+            echo "No test script"
+          fi
+
+      - uses: astral-sh/setup-uv@1c37ad07a6a961277cf70c0d37d6f313000f5884 # v10.3.0
+        if: steps.inspect.outputs.python == 'uv'
+        with:
+          working-directory: ${{ matrix.directory }}
+          enable-cache: true
+
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+        if: steps.inspect.outputs.python == 'pip'
+        with:
+          python-version: ${{ !steps.inspect.outputs.python-version-file && '3.13' || '' }}
+          python-version-file: ${{ steps.inspect.outputs.python-version-file }}
+
+      - name: install and test (${{ steps.inspect.outputs.python }})
+        if: steps.inspect.outputs.python
+        env:
+          INSTALLER: ${{ steps.inspect.outputs.python }}
+        run: |
+          if [ "$INSTALLER" = uv ]; then
+            uv sync --locked
+            run() { uv run --locked --with pytest "$@"; }
+          else
+            python -m venv "$RUNNER_TEMP/venv"
+            # shellcheck disable=SC1091
+            . "$RUNNER_TEMP/venv/bin/activate"
+            if [ -f requirements.txt ]; then
+              pip install -r requirements.txt
+            fi
+            if grep -qsE '^\[(project|build-system)\]' pyproject.toml; then
+              pip install .
+            fi
+            run() { pip install pytest && "$@"; }
+          fi
+
+          if [ -n "$(find . -path ./node_modules -prune -o -path './.*' -prune -o \( -name 'test_*.py' -o -name '*_test.py' \) -print)" ]; then
+            # Exit code 5 means pytest collected no tests.
+            run python -m pytest || [ $? -eq 5 ]
+          else
+            echo "No tests"
+          fi
+
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        if: steps.inspect.outputs.go
+        with:
+          go-version-file: ${{ matrix.directory }}/go.mod
+          cache-dependency-path: ${{ matrix.directory }}/go.sum
+
+      - name: build and vet (go)
+        if: steps.inspect.outputs.go
+        run: go build ./... && go vet ./...
+
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+        if: steps.inspect.outputs.cargo
+        with:
+          workspaces: ${{ matrix.directory }}
+
+      - name: build (cargo)
+        if: steps.inspect.outputs.cargo
+        run: |
+          if [ -f Cargo.lock ]; then
+            cargo build --locked
+          else
+            cargo build
+          fi
+
+      - uses: dart-lang/setup-dart@6afc89df92d6eb3834022f73cd65adc8cdfcb92d # v1.8.1
+        if: steps.inspect.outputs.dart && steps.inspect.outputs.dart != 'flutter'
+        with:
+          sdk: ${{ steps.inspect.outputs.dart }}
+
+      - uses: subosito/flutter-action@1a449444c387b1966244ae4d4f8c696479add0b2 # v2.23.0
+        if: steps.inspect.outputs.dart == 'flutter'
+        with:
+          channel: stable
+          cache: true
+
+      - name: install (${{ steps.inspect.outputs.dart == 'flutter' && 'flutter' || 'dart' }})
+        if: steps.inspect.outputs.dart
+        env:
+          SDK: ${{ steps.inspect.outputs.dart }}
+        run: |
+          if [ "$SDK" = flutter ]; then
+            flutter pub get
+          else
+            dart pub get
+          fi
