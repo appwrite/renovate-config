@@ -24,13 +24,16 @@ Each repository also gets a Dependency Dashboard issue listing pending and rate-
 | `org-inherited-config.json` | Org-level overrides for `appwrite` repositories (`appwrite-labs/renovate-config` has one for that org). The preset itself is applied to every org by `global.json`, so an org needs no `renovate-config` repository. |
 | `global.json` | Runner settings: extends the preset for every repository, turns off onboarding, enables `inheritConfig`, and lists the post-upgrade commands repositories may run. |
 | `.github/workflows/renovate.yml` | The runner. |
+| `.github/workflows/automerge.yml` | Merges approved Renovate PRs with green CI. |
+| `.github/scripts/repositories.sh` | The repositories Renovate covers: exclusions, forks and split mirrors. Shared by both workflows. |
+| `.github/scripts/automerge.sh` | The auto-merge decision for one org or one PR. |
 | `.github/workflows/validate.yml` | Validates the config files on every PR. |
 
 ## How it runs
 
 The `renovate` workflow runs daily at 06:00 UTC:
 
-1. `plan` mints an app token per org, lists the repositories the app is installed on, drops archived repositories, forks (except those listed in `FORKS`) and exclusions, and splits the rest into chunks of 40.
+1. `plan` mints an app token per org, lists the repositories the app is installed on, drops archived repositories, forks (except those listed in `FORKS`) and exclusions (both in `.github/scripts/repositories.sh`), and splits the rest into chunks of 40.
 2. `renovate <org> <n>/<total>` runs Renovate on one chunk with its own token. An app token lasts one hour, so chunks keep each job well inside it, and a job stops at 55 minutes.
 
 The app's client ID and private key live in the `renovate` environment, which only `main` can deploy to, so a workflow edited on another branch cannot read them. An org without the app installed is skipped with a warning.
@@ -42,6 +45,18 @@ Actions, then **renovate**, then **Run workflow**:
 - **dryRun** logs what Renovate would change and opens nothing.
 - **debug** turns on debug logging.
 - **repositories** runs a comma-separated list instead of every repository, for example `appwrite/console,appwrite/mcp`. All entries must belong to one org.
+
+## Auto-merge
+
+The `automerge` workflow runs every 30 minutes and merges a Renovate PR only when CI passed and someone approved it. Every condition must hold for the PR's current head commit:
+
+1. The PR is authored by `renovate-appwrite[bot]`, open, not a draft, has no conflicts, and its repository is covered by the runner (the same exclusions, forks and split mirrors as `plan`).
+2. CI passed: at least one check run or commit status exists (a repository without CI never auto-merges), no check run is pending, every check run concluded success, skipped or neutral, and the combined commit status is success. Review bot check runs (Hansi, Tenki) do not count as CI.
+3. It is approved: an `APPROVED` review on the head commit from `appwrite[bot]` or from a user with write, maintain or admin access, or the review bot's `Hansi` check reporting Tier S on the head commit. No reviewer's latest review requests changes.
+
+It then merges with the org's app token, squashing if the repository and its branch rulesets allow it, else with a merge commit, else by rebase, and passes `--match-head-commit` so a push in between stops the merge. Branch protection still applies: a refused merge is logged as a warning and retried on the next run. Every PR gets one log line with the decision and the reason.
+
+To check without merging, run **automerge** by hand with **dryRun**. **repositories** limits the run to a comma-separated list of repositories. Locally, `DRY_RUN=true .github/scripts/automerge.sh pr <owner/name> <number>` prints the decision for one PR with your own `gh` login, without the repository coverage check.
 
 ## Per-repository settings
 
@@ -64,7 +79,7 @@ To turn Renovate off for a repository, commit `{ "enabled": false }` as its `ren
 - `utopia-php` split mirrors: the `plan` job reads `appwrite/appwrite/packages` and skips every matching `utopia-php/<name>`, whatever the app installation covers, and a manual run naming one is rejected. Packages absorbed into `appwrite/appwrite/packages` have `utopia-php/<name>` repositories that are split mirrors, so they must never get Renovate PRs; their dependencies are updated in the monorepo. Add a repository to the installation only while it is still developed in `utopia-php`.
 
 - `appwrite/sdk-for-*`: generated SDKs. Their dependencies are updated in `appwrite/sdk-generator` templates.
-- `appwrite/sdk-generator`, `appwrite-labs/cluster-configuration-generator`, `appwrite-labs/application-configuration`: still run Renovate from their own workflows. To move one here, delete its workflow and remove it from `EXCLUDED` in `.github/workflows/renovate.yml`.
+- `appwrite/sdk-generator`, `appwrite-labs/cluster-configuration-generator`, `appwrite-labs/application-configuration`: still run Renovate from their own workflows. To move one here, delete its workflow and remove it from `EXCLUDED` in `.github/scripts/repositories.sh`.
 
 ## Changing the config
 

@@ -24,20 +24,13 @@ permissions:
 concurrency:
   group: renovate
 
+# Excluded repositories, forks and split mirrors are decided in .github/scripts/repositories.sh,
+# which the automerge workflow shares.
 env:
-  # Generated SDKs are updated through sdk-generator. These repositories run Renovate from
-  # their own workflows, so they are skipped here to avoid processing them twice.
-  EXCLUDED: >-
-    appwrite/sdk-generator
-    appwrite-labs/cluster-configuration-generator
-    appwrite-labs/application-configuration
   CHUNK: 40
   # Orgs the runner covers. utopia-php has the app on selected repositories only: the
   # packages absorbed into appwrite/appwrite are split mirrors and must not get PRs.
   OWNERS: appwrite appwrite-labs open-runtimes utopia-php
-  # Forks are skipped unless listed here; each opts in with forkProcessing in its renovate.json.
-  FORKS: >-
-    appwrite/grafana-oncall
 
 jobs:
   # An app token lives one hour, so the repositories are split into chunks that each
@@ -84,6 +77,8 @@ jobs:
           private-key: ${{ secrets.RENOVATE_APP_PRIVATE_KEY }}
           owner: utopia-php
 
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
       - name: split repositories into chunks
         id: chunks
         env:
@@ -93,14 +88,11 @@ jobs:
           RUNTIMES_TOKEN: ${{ steps.runtimes.outputs.token }}
           UTOPIA_TOKEN: ${{ steps.utopia.outputs.token }}
         run: |
-          # Packages absorbed into appwrite/appwrite keep a utopia-php/<name> repository that
-          # bin/monorepo split pushes to; a PR there would be overwritten, so never process one.
-          if ! mirrors=$(GH_TOKEN="$APPWRITE_TOKEN" gh api repos/appwrite/appwrite/contents/packages \
-            --jq '[.[] | select(.type == "dir") | "utopia-php/\(.name)"] | join(" ")'); then
+          set -o pipefail
+          if ! mirrors=$(GH_TOKEN="$APPWRITE_TOKEN" .github/scripts/repositories.sh mirrors); then
             echo "::error::could not list appwrite/appwrite packages, so utopia-php mirrors cannot be excluded"
             exit 1
           fi
-          excluded="$EXCLUDED $mirrors"
           if [ -n "$REPOSITORIES" ]; then
             for repository in $(echo "$REPOSITORIES" | tr ',' ' '); do
               case " $mirrors " in
@@ -129,12 +121,8 @@ jobs:
                 echo "::warning::renovate appwrite is not installed on $owner; skipping it" >&2
                 continue
               fi
-              GH_TOKEN="$token" gh api --paginate /installation/repositories \
-                --jq ".repositories[] | select(.archived | not) | [.full_name, .fork] | @tsv" \
-                | jq -R --arg owner "$owner" --arg excluded "$excluded" --arg forks "$FORKS" 'split("\t") | {owner: $owner, name: .[0], fork: (.[1] == "true")}
-                    | select((.fork | not) or (.name as $name | $forks | split(" ") | index($name)))
-                    | select((.name | split("/")[1] | startswith("sdk-for-")) | not)
-                    | select(.name as $name | ($excluded | split(" ") | index($name)) | not)'
+              GH_TOKEN="$token" .github/scripts/repositories.sh list \
+                | jq -R --arg owner "$owner" '{owner: $owner, name: .}'
             done | jq -cs --argjson size "$CHUNK" 'group_by(.owner) | map(
                 [.[].name] as $names
                 | .[0].owner as $owner

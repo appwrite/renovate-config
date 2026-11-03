@@ -1,0 +1,60 @@
+name: automerge
+
+on:
+  schedule:
+    - cron: "*/30 * * * *"
+  workflow_dispatch:
+    inputs:
+      dryRun:
+        description: "Dry run (log which PRs would merge, merge nothing)"
+        type: boolean
+        default: false
+      repositories:
+        description: "Comma-separated owner/repo list to check instead of every covered repository"
+        type: string
+        default: ""
+
+permissions:
+  contents: read
+
+concurrency:
+  group: automerge
+  cancel-in-progress: false
+
+jobs:
+  automerge:
+    name: automerge ${{ matrix.owner }}
+    runs-on: ubuntu-latest
+    # Stops before the job's app token expires.
+    timeout-minutes: 55
+    # The app credentials live only in this environment, which deploys from main alone.
+    environment: renovate
+    strategy:
+      fail-fast: false
+      matrix:
+        owner: [appwrite, appwrite-labs, open-runtimes, utopia-php]
+    steps:
+      # An org without the app installed is skipped with a warning rather than failing the run.
+      - name: generate app token
+        id: app-token
+        continue-on-error: true
+        uses: actions/create-github-app-token@64ab729a6294000f5aa4a4bc0b73d1f32bc45510 # v3.3.0
+        with:
+          client-id: ${{ vars.RENOVATE_APP_CLIENT_ID }}
+          private-key: ${{ secrets.RENOVATE_APP_PRIVATE_KEY }}
+          owner: ${{ matrix.owner }}
+
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: merge approved renovate PRs with green CI
+        env:
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
+          OWNER: ${{ matrix.owner }}
+          DRY_RUN: ${{ inputs.dryRun || false }}
+          REPOSITORIES: ${{ inputs.repositories }}
+        run: |
+          if [ -z "$GH_TOKEN" ]; then
+            echo "::warning::renovate appwrite is not installed on $OWNER; skipping it"
+            exit 0
+          fi
+          .github/scripts/automerge.sh org "$OWNER"
