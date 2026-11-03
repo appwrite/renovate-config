@@ -12,7 +12,7 @@ set -euo pipefail
 AUTHOR='renovate-appwrite[bot]'
 SEARCH_AUTHOR='app/renovate-appwrite'
 # The review bot. Its GitHub App was renamed from hansi-codes to appwrite.
-BOT='appwrite[bot]'
+BOTS='appwrite[bot] hansi-codes[bot]'
 BOT_APPS='appwrite hansi-codes'
 BOT_CHECK='Hansi'
 # Review apps whose check runs are verdicts, not CI: a maintainer's approval stands even when one of them fails.
@@ -102,10 +102,8 @@ pr() {
     echo "$log: skip, changes requested by $blocked"; return
   fi
 
-  approver=''
-  if jq -e --arg sha "$sha" --arg bot "$BOT" 'any(.[]; .state == "APPROVED" and .commit_id == $sha and .user.login == $bot)' <<< "$reviews" > /dev/null; then
-    approver=$BOT
-  else
+  approver=$(jq -r --arg sha "$sha" --arg bots "$BOTS" '[.[] | select(.state == "APPROVED" and .commit_id == $sha and (.user.login as $login | $bots | split(" ") | index($login)))] | first | .user.login // ""' <<< "$reviews")
+  if [ -z "$approver" ]; then
     for login in $(jq -r --arg sha "$sha" '[.[] | select(.state == "APPROVED" and .commit_id == $sha and .user.type == "User") | .user.login] | unique | .[]' <<< "$reviews"); do
       permission=$(gh api "repos/$repository/collaborators/$login/permission" --jq '.permission' || echo 'none')
       if [ "$permission" = 'admin' ] || [ "$permission" = 'write' ]; then
@@ -121,7 +119,7 @@ pr() {
     fi
   fi
   if [ -z "$approver" ]; then
-    echo "$log: skip, ${sha:0:7} is not approved by $BOT or a maintainer${verdict:+ ($BOT_CHECK: $verdict)}"; return
+    echo "$log: skip, ${sha:0:7} is not approved by the review bot or a maintainer${verdict:+ ($BOT_CHECK: $verdict)}"; return
   fi
 
   method=$(merge_method "$repository" "$(jq -r '.base.ref' <<< "$pull")")
