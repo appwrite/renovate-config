@@ -149,8 +149,9 @@ merge_method() {
     (select(.mergeCommitAllowed) | "merge"),
     (select(.rebaseMergeAllowed) | "rebase")
   ] | join(" ")')
-  # Private repositories on a plan without rulesets answer 403, and have no rules to honour.
   if ! rules=$(gh api "repos/$repository/rules/branches/$branch" --jq '[.[] | select(.type == "pull_request") | .parameters.allowed_merge_methods // empty]'); then
+    # A private repository on a plan without rulesets has no rules to honour; anything else fails the PR's evaluation.
+    [[ "$rules" == *'Upgrade to GitHub Pro'* ]] || return 1
     rules='[]'
   fi
   for method in squash merge rebase; do
