@@ -149,7 +149,10 @@ merge_method() {
     (select(.mergeCommitAllowed) | "merge"),
     (select(.rebaseMergeAllowed) | "rebase")
   ] | join(" ")')
-  rules=$(gh api "repos/$repository/rules/branches/$branch" --jq '[.[] | select(.type == "pull_request") | .parameters.allowed_merge_methods // empty]')
+  # Private repositories on a plan without rulesets answer 403, and have no rules to honour.
+  if ! rules=$(gh api "repos/$repository/rules/branches/$branch" --jq '[.[] | select(.type == "pull_request") | .parameters.allowed_merge_methods // empty]'); then
+    rules='[]'
+  fi
   for method in squash merge rebase; do
     if contains "$settings" "$method" && jq -e --arg method "$method" 'all(.[]; index($method))' <<< "$rules" > /dev/null; then
       echo "$method"
