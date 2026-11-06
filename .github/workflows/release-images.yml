@@ -1,0 +1,49 @@
+name: release-images
+
+on:
+  schedule:
+    # After the daily Renovate run, so a base image update merged the day before ships the same morning.
+    - cron: "0 8 * * *"
+  workflow_dispatch:
+    inputs:
+      dryRun:
+        description: "Dry run (log what would be released, publish nothing)"
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-images
+  cancel-in-progress: false
+
+jobs:
+  release:
+    name: release ${{ matrix.owner }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    # The app credentials live only in this environment, which deploys from main alone.
+    environment: renovate
+    strategy:
+      fail-fast: false
+      matrix:
+        owner: [appwrite]
+    steps:
+      - name: generate app token
+        id: app-token
+        uses: actions/create-github-app-token@64ab729a6294000f5aa4a4bc0b73d1f32bc45510 # v3.3.0
+        with:
+          client-id: ${{ vars.RENOVATE_APP_CLIENT_ID }}
+          private-key: ${{ secrets.RENOVATE_APP_PRIVATE_KEY }}
+          owner: ${{ matrix.owner }}
+
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      # An app token, because a release made with the workflow's own token would not start the build.
+      - name: release image repositories
+        env:
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
+          DRY_RUN: ${{ inputs.dryRun || false }}
+          OWNER: ${{ matrix.owner }}
+        run: .github/scripts/release-images.sh "$OWNER"
