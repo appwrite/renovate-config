@@ -8,6 +8,13 @@
     ":semanticCommits"
   ],
   "labels": ["dependencies"],
+  "packageRules": [
+    {
+      "description": "Tags look like php-8.5-2.1.4, which Docker versioning rejects, so the image would never update.",
+      "matchPackageNames": ["appwrite/utopia-base"],
+      "versioning": "regex:^(?<compatibility>php-\\d+\\.\\d+)-(?<major>\\d+)\\.(?<minor>\\d+)\\.(?<patch>\\d+)$"
+    }
+  ],
   "schedule": ["* * * * 1"],
   "lockFileMaintenance": {
     "enabled": true,
