@@ -1,0 +1,86 @@
+name: report
+
+on:
+  schedule:
+    - cron: "30 7 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: report
+  cancel-in-progress: false
+
+jobs:
+  report:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    # The app credentials live only in this environment, which deploys from main alone.
+    environment: renovate
+    steps:
+      # An org without the app installed is skipped with a warning rather than failing the run.
+      - name: generate appwrite token
+        id: appwrite
+        continue-on-error: true
+        uses: actions/create-github-app-token@64ab729a6294000f5aa4a4bc0b73d1f32bc45510 # v3.3.0
+        with:
+          client-id: ${{ vars.RENOVATE_APP_CLIENT_ID }}
+          private-key: ${{ secrets.RENOVATE_APP_PRIVATE_KEY }}
+          owner: appwrite
+
+      - name: generate appwrite-labs token
+        id: labs
+        continue-on-error: true
+        uses: actions/create-github-app-token@64ab729a6294000f5aa4a4bc0b73d1f32bc45510 # v3.3.0
+        with:
+          client-id: ${{ vars.RENOVATE_APP_CLIENT_ID }}
+          private-key: ${{ secrets.RENOVATE_APP_PRIVATE_KEY }}
+          owner: appwrite-labs
+
+      - name: generate open-runtimes token
+        id: runtimes
+        continue-on-error: true
+        uses: actions/create-github-app-token@64ab729a6294000f5aa4a4bc0b73d1f32bc45510 # v3.3.0
+        with:
+          client-id: ${{ vars.RENOVATE_APP_CLIENT_ID }}
+          private-key: ${{ secrets.RENOVATE_APP_PRIVATE_KEY }}
+          owner: open-runtimes
+
+      - name: generate utopia-php token
+        id: utopia
+        continue-on-error: true
+        uses: actions/create-github-app-token@64ab729a6294000f5aa4a4bc0b73d1f32bc45510 # v3.3.0
+        with:
+          client-id: ${{ vars.RENOVATE_APP_CLIENT_ID }}
+          private-key: ${{ secrets.RENOVATE_APP_PRIVATE_KEY }}
+          owner: utopia-php
+
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      # One job and no artifacts: both would expose the report on this public repository.
+      - name: post open security PRs
+        env:
+          APPWRITE_TOKEN: ${{ steps.appwrite.outputs.token }}
+          LABS_TOKEN: ${{ steps.labs.outputs.token }}
+          RUNTIMES_TOKEN: ${{ steps.runtimes.outputs.token }}
+          UTOPIA_TOKEN: ${{ steps.utopia.outputs.token }}
+          SECURITY_DISCORD_WEBHOOK: ${{ secrets.SECURITY_DISCORD_WEBHOOK }}
+          FORCE: ${{ github.event_name == 'workflow_dispatch' }}
+        run: |
+          if [ -z "$SECURITY_DISCORD_WEBHOOK" ]; then
+            echo "::warning::SECURITY_DISCORD_WEBHOOK is not set; nothing to post to"
+            exit 0
+          fi
+          rows=$(mktemp)
+          while read -r owner token; do
+            if [ -z "$token" ]; then
+              echo "::warning::renovate appwrite is not installed on $owner; skipping it"
+              continue
+            fi
+            GH_TOKEN=$token .github/scripts/report.sh org "$owner" >> "$rows"
+          done <<< "appwrite $APPWRITE_TOKEN
+          appwrite-labs $LABS_TOKEN
+          open-runtimes $RUNTIMES_TOKEN
+          utopia-php $UTOPIA_TOKEN"
+          .github/scripts/report.sh post "$rows"
