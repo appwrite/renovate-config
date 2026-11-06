@@ -13,6 +13,7 @@ Every repository the `renovate appwrite` GitHub App is installed on is covered w
 | Major updates | Weekly, once a release is 7 days old | One PR per package |
 | Lock file maintenance | Weekly | One PR that refreshes the lock file, picking up transitive fixes inside existing ranges |
 | GitHub Actions | With the above | Pinned by commit digest |
+| Dockerfile base images | With the above | Pinned by digest, in one PR per repository for pins and digest refreshes |
 
 Each repository also gets a Dependency Dashboard issue listing pending and rate-limited updates, plus a list of known vulnerabilities from OSV that no update fixes yet, such as advisories with no patched release or fixes that need a major upgrade. That list is the place to look for what Renovate will not handle on its own.
 
