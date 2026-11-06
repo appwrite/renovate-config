@@ -27,6 +27,25 @@ org() {
       severity: ([.body | scan("(?:CVSS Score:[^\\n]*\\(|Severity: )(Critical|High|Medium|Low)") | .[0]] as $found
         | (["Critical", "High", "Medium", "Low"] | map(select(. as $level | $found | index($level))) | first) // "Unknown")
     }')
+
+  while read -r row; do
+    [ -n "$row" ] || continue
+    repository=$(jq -r '.repository' <<< "$row")
+    number=$(jq -r '.number' <<< "$row")
+    [[ "$covered" == *" $repository "* ]] || continue
+    reason=$(evaluate "$repository" "$number")
+    # GitHub computes mergeability when first asked, so a second look usually has the answer.
+    if [[ "$reason" == *'mergeability not computed yet' ]]; then
+      sleep 5
+      reason=$(evaluate "$repository" "$number")
+    fi
+    reason=${reason#"$repository#$number: "}
+    reason=${reason#skip, }
+    if [[ "$reason" == 'would merge'* ]]; then
+      reason='approved with green CI, but not merged'
+    fi
+    jq -r --arg reason "${reason:-could not be evaluated}" '[.severity, .age, "\(.repository)#\(.number)", .url, $reason] | @tsv' <<< "$row"
+  done <<< "$prs"
 }
 
 evaluate() {
@@ -51,25 +70,6 @@ render() {
   echo
   # Commit hashes and details differ per PR, so they would split a blocker into many lines.
   cut -f 5 "$rows" | sed -E 's/(^| )[0-9a-f]{7}( |$)/ /; s/^ //; s/[:(].*//; s/ on *$//; s/ *$//' | sort | uniq -c | sort -rn | awk '{ count = $1; $1 = ""; print "-" $0 ": " count }'
-
-  while read -r row; do
-    [ -n "$row" ] || continue
-    repository=$(jq -r '.repository' <<< "$row")
-    number=$(jq -r '.number' <<< "$row")
-    [[ "$covered" == *" $repository "* ]] || continue
-    reason=$(evaluate "$repository" "$number")
-    # GitHub computes mergeability when first asked, so a second look usually has the answer.
-    if [[ "$reason" == *'mergeability not computed yet' ]]; then
-      sleep 5
-      reason=$(evaluate "$repository" "$number")
-    fi
-    reason=${reason#"$repository#$number: "}
-    reason=${reason#skip, }
-    if [[ "$reason" == 'would merge'* ]]; then
-      reason='approved with green CI, but not merged'
-    fi
-    jq -r --arg reason "${reason:-could not be evaluated}" '[.severity, .age, "\(.repository)#\(.number)", .url, $reason] | @tsv' <<< "$row"
-  done <<< "$prs"
   echo
   echo "## PRs"
   echo
