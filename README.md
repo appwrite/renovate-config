@@ -25,8 +25,10 @@ Each repository also gets a Dependency Dashboard issue listing pending and rate-
 | `global.json` | Runner settings: extends the preset for every repository, turns off onboarding, enables `inheritConfig`, and lists the post-upgrade commands repositories may run. |
 | `.github/workflows/renovate.yml` | The runner. |
 | `.github/workflows/automerge.yml` | Merges approved Renovate PRs with green CI. |
+| `.github/workflows/report.yml` | Posts open security PRs and their blockers to #security. |
 | `.github/scripts/repositories.sh` | The repositories Renovate covers: exclusions, forks and split mirrors. Shared by both workflows. |
 | `.github/scripts/automerge.sh` | The auto-merge decision for one org or one PR. |
+| `.github/scripts/report.sh` | Collects, renders and posts the security PR report. |
 | `.github/workflows/validate.yml` | Validates the config files on every PR. |
 | `.github/workflows/verify.yml` | Reusable workflow that installs, builds and tests a repository without CI of its own. |
 
@@ -137,3 +139,11 @@ After merging, dispatch a dry run on one or two repositories before the next sch
 - **A PR says the lock file could not be updated.** The package manager failed inside Renovate, usually a peer dependency conflict or an outdated lock file. Fix it in that repository; Renovate retries on its next run.
 - **A repository gets no PRs.** Check that the app is installed on it, that it is not archived or excluded, and look for its name in the `plan` job log.
 - **`bad-credentials` near the end of a job.** The chunk took longer than the token lasts. Lower `CHUNK` in the workflow.
+
+## Security PR report
+
+The `report` workflow runs daily at 07:30 UTC and lists every open Renovate security PR with its severity, age and the reason auto-merge is holding it, using the same decision as `automerge.sh`. It posts to the #security Discord forum on Mondays, and on any day a critical or high fix reaches 3 days open.
+
+It needs a webhook for that forum, stored as `SECURITY_DISCORD_WEBHOOK` in the `renovate` environment; without one the run logs a warning and posts nothing. **Run workflow** posts straight away.
+
+This repository is public, so the report only goes to Discord. It isn't written to logs, artifacts or issues, because it lists unfixed vulnerabilities, including in private repositories.
