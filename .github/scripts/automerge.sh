@@ -19,6 +19,8 @@ BOT_CHECK='Hansi'
 REVIEW_APPS='appwrite hansi-codes tenki-reviewer'
 # The verify workflow's detection job: it passes even when it finds nothing to build.
 VERIFY_DETECT='detect projects'
+# Renovate titles a major update "to v7" and a group of them "(major)"; other updates name a full version.
+MAJOR_TITLE=' to v[0-9]+( \[[Ss][Ee][Cc][Uu][Rr][Ii][Tt][Yy]\])?$|\(major\)'
 
 here=$(dirname "$0")
 dry=${DRY_RUN:-false}
@@ -55,7 +57,7 @@ org() {
 
 pr() {
   local repository=$1 number=$2 log="$1#$2"
-  local pull sha runs checks statuses ci pending unsuccessful status reviews blocked approver login permission verdict method
+  local pull sha runs checks statuses ci pending unsuccessful status reviews blocked approver login permission verdict method major=false
 
   pull=$(gh api "repos/$repository/pulls/$number")
   sha=$(jq -r '.head.sha' <<< "$pull")
@@ -105,7 +107,14 @@ pr() {
     echo "$log: skip, changes requested by $blocked"; return
   fi
 
-  approver=$(jq -r --arg sha "$sha" --arg bots "$BOTS" '[.[] | select(.state == "APPROVED" and .commit_id == $sha and (.user.login as $login | $bots | split(" ") | index($login)))] | first | .user.login // ""' <<< "$reviews")
+  # Green CI doesn't show a major upgrade is safe to ship, so the bot's verdict isn't enough.
+  if [[ "$(jq -r '.title' <<< "$pull")" =~ $MAJOR_TITLE ]]; then
+    major=true
+  fi
+  approver=''
+  if [ "$major" = 'false' ]; then
+    approver=$(jq -r --arg sha "$sha" --arg bots "$BOTS" '[.[] | select(.state == "APPROVED" and .commit_id == $sha and (.user.login as $login | $bots | split(" ") | index($login)))] | first | .user.login // ""' <<< "$reviews")
+  fi
   if [ -z "$approver" ]; then
     for login in $(jq -r --arg sha "$sha" '[.[] | select(.state == "APPROVED" and .commit_id == $sha and .user.type == "User") | .user.login] | unique | .[]' <<< "$reviews"); do
       permission=$(gh api "repos/$repository/collaborators/$login/permission" --jq '.permission' || echo 'none')
@@ -114,6 +123,9 @@ pr() {
         break
       fi
     done
+  fi
+  if [ -z "$approver" ] && [ "$major" = 'true' ]; then
+    echo "$log: skip, major update needs a maintainer's approval on ${sha:0:7}"; return
   fi
   if [ -z "$approver" ]; then
     verdict=$(jq -r --arg apps "$BOT_APPS" --arg name "$BOT_CHECK" '[.[] | select(.name == $name and .status == "completed" and (.app.slug as $slug | $apps | split(" ") | index($slug)))] | last | .output.title // ""' <<< "$runs")
