@@ -26,9 +26,11 @@ Each repository also gets a Dependency Dashboard issue listing pending and rate-
 | `global.json` | Runner settings: extends the preset for every repository, turns off onboarding, enables `inheritConfig`, and lists the post-upgrade commands repositories may run. |
 | `.github/workflows/renovate.yml` | The runner. |
 | `.github/workflows/automerge.yml` | Merges approved Renovate PRs with green CI. |
+| `.github/workflows/release-images.yml` | Publishes patch releases of image repositories with Renovate updates. |
 | `.github/workflows/report.yml` | Posts open security PRs and their blockers to #security. |
 | `.github/scripts/repositories.sh` | The repositories Renovate covers: exclusions, forks and split mirrors. Shared by both workflows. |
 | `.github/scripts/automerge.sh` | The auto-merge decision for one org or one PR. |
+| `.github/scripts/release-images.sh` | The release decision for image repositories, and the list of them. |
 | `.github/scripts/report.sh` | Collects, renders and posts the security PR report. |
 | `.github/workflows/validate.yml` | Validates the config files on every PR. |
 | `.github/workflows/verify.yml` | Reusable workflow that installs, builds and tests a repository without CI of its own. |
@@ -148,3 +150,12 @@ The `report` workflow runs daily at 07:30 UTC and lists every open Renovate secu
 It needs a webhook for that forum, stored as `SECURITY_DISCORD_WEBHOOK` in the `renovate` environment; without one the run logs a warning and posts nothing. **Run workflow** posts straight away.
 
 This repository is public, so the report only goes to Discord. It isn't written to logs, artifacts or issues, because it lists unfixed vulnerabilities, including in private repositories.
+
+## Image releases
+
+An image only picks up a new base when it is rebuilt, and image repositories only build from a release or a tag. The `release-images` workflow runs daily at 08:00 UTC and publishes a patch release of each repository listed in `release-images.sh`, when its default branch has changes since the latest version tag and:
+
+- every commit since that tag is from `renovate-appwrite[bot]`, so nobody else's unfinished work ships
+- something outside `.github/` changed, because workflow updates don't change the image
+
+To add a repository, check that its build runs from a release or a tag, then add it to `REPOSITORIES`. Add its org to the workflow's matrix if it's a new one. Run **release-images** by hand with **dryRun** to see what it would do.
