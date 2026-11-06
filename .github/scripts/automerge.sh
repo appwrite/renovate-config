@@ -149,7 +149,11 @@ merge_method() {
     (select(.mergeCommitAllowed) | "merge"),
     (select(.rebaseMergeAllowed) | "rebase")
   ] | join(" ")')
-  rules=$(gh api "repos/$repository/rules/branches/$branch" --jq '[.[] | select(.type == "pull_request") | .parameters.allowed_merge_methods // empty]')
+  if ! rules=$(gh api "repos/$repository/rules/branches/$branch" --jq '[.[] | select(.type == "pull_request") | .parameters.allowed_merge_methods // empty]'); then
+    # A private repository on a plan without rulesets has no rules to honour; anything else fails the PR's evaluation.
+    [[ "$rules" == *'Upgrade to GitHub Pro'* ]] || return 1
+    rules='[]'
+  fi
   for method in squash merge rebase; do
     if contains "$settings" "$method" && jq -e --arg method "$method" 'all(.[]; index($method))' <<< "$rules" > /dev/null; then
       echo "$method"
