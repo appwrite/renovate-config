@@ -14,27 +14,10 @@ OVERDUE_DAYS=3
 here=$(dirname "$0")
 
 org() {
-  local owner=$1 covered row repository number reason
+  local owner=$1 covered prs row repository number reason
   covered=" $("$here/repositories.sh" list | tr '\n' ' ') "
 
-  while read -r row; do
-    [ -n "$row" ] || continue
-    repository=$(jq -r '.repository' <<< "$row")
-    number=$(jq -r '.number' <<< "$row")
-    [[ "$covered" == *" $repository "* ]] || continue
-    reason=$(evaluate "$repository" "$number")
-    # GitHub computes mergeability when first asked, so a second look usually has the answer.
-    if [[ "$reason" == *'mergeability not computed yet' ]]; then
-      sleep 5
-      reason=$(evaluate "$repository" "$number")
-    fi
-    reason=${reason#"$repository#$number: "}
-    reason=${reason#skip, }
-    if [[ "$reason" == 'would merge'* ]]; then
-      reason='approved with green CI, but not merged'
-    fi
-    jq -r --arg reason "${reason:-could not be evaluated}" '[.severity, .age, "\(.repository)#\(.number)", .url, $reason] | @tsv' <<< "$row"
-  done < <(gh search prs --owner "$owner" --author "$SEARCH_AUTHOR" --label security --state open --limit 1000 \
+  prs=$(gh search prs --owner "$owner" --author "$SEARCH_AUTHOR" --label security --state open --limit 1000 \
     --json repository,number,url,createdAt,body \
     --jq '.[] | {
       repository: .repository.nameWithOwner,
@@ -68,6 +51,25 @@ render() {
   echo
   # Commit hashes and details differ per PR, so they would split a blocker into many lines.
   cut -f 5 "$rows" | sed -E 's/(^| )[0-9a-f]{7}( |$)/ /; s/^ //; s/[:(].*//; s/ on *$//; s/ *$//' | sort | uniq -c | sort -rn | awk '{ count = $1; $1 = ""; print "-" $0 ": " count }'
+
+  while read -r row; do
+    [ -n "$row" ] || continue
+    repository=$(jq -r '.repository' <<< "$row")
+    number=$(jq -r '.number' <<< "$row")
+    [[ "$covered" == *" $repository "* ]] || continue
+    reason=$(evaluate "$repository" "$number")
+    # GitHub computes mergeability when first asked, so a second look usually has the answer.
+    if [[ "$reason" == *'mergeability not computed yet' ]]; then
+      sleep 5
+      reason=$(evaluate "$repository" "$number")
+    fi
+    reason=${reason#"$repository#$number: "}
+    reason=${reason#skip, }
+    if [[ "$reason" == 'would merge'* ]]; then
+      reason='approved with green CI, but not merged'
+    fi
+    jq -r --arg reason "${reason:-could not be evaluated}" '[.severity, .age, "\(.repository)#\(.number)", .url, $reason] | @tsv' <<< "$row"
+  done <<< "$prs"
   echo
   echo "## PRs"
   echo
