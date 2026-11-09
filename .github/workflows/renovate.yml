@@ -2,7 +2,7 @@ name: renovate
 
 on:
   schedule:
-    - cron: "0 6 * * *" # Daily 06:00 UTC
+    - cron: "0 6,14 * * *" # Daily 06:00 and 14:00 UTC
   workflow_dispatch:
     inputs:
       dryRun:
@@ -27,7 +27,7 @@ concurrency:
 # Excluded repositories, forks and split mirrors are decided in .github/scripts/repositories.sh,
 # which the automerge workflow shares.
 env:
-  CHUNK: 40
+  CHUNK: 25
   # Orgs the runner covers. utopia-php has the app on selected repositories only: the
   # packages absorbed into appwrite/appwrite are split mirrors and must not get PRs.
   OWNERS: appwrite appwrite-labs open-runtimes utopia-php
