@@ -140,6 +140,7 @@ After merging, dispatch a dry run on one or two repositories before the next sch
 ## Troubleshooting
 
 - **A PR says the lock file could not be updated.** The package manager failed inside Renovate, usually a peer dependency conflict or an outdated lock file. Fix it in that repository; Renovate retries on its next run.
+- **npm stays on 11.** `constraints.npm` in `default.json` holds it there because npm 12 fails lock file updates with `EALLOWREMOTE` ([npm/cli#9800](https://github.com/npm/cli/issues/9800)). Remove it once that is fixed.
 - **A repository gets no PRs.** Check that the app is installed on it, that it is not archived or excluded, and look for its name in the `plan` job log.
 - **`bad-credentials` near the end of a job.** The chunk took longer than the token lasts. Lower `CHUNK` in the workflow.
 
