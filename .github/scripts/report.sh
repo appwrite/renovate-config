@@ -43,6 +43,9 @@ org() {
     reason=${reason#skip, }
     if [[ "$reason" == 'would merge'* ]]; then
       reason='approved with green CI, but not merged'
+      if [ "$(gh api "repos/$repository/pulls/$number" --jq '.mergeable_state')" = 'blocked' ]; then
+        reason='approved with green CI, but the branch rules refuse the merge'
+      fi
     fi
     jq -r --arg reason "${reason:-could not be evaluated}" '[.severity, .age, "\(.repository)#\(.number)", .url, $reason] | @tsv' <<< "$row"
   done <<< "$prs"
