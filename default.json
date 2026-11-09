@@ -24,6 +24,11 @@
       "matchManagers": ["dockerfile"],
       "matchUpdateTypes": ["pin", "pinDigest", "digest"],
       "groupName": "docker base image digests"
+    },
+    {
+      "description": "A pin changes no code and has no release date, so the release age check would hold it forever.",
+      "matchUpdateTypes": ["pin", "pinDigest"],
+      "minimumReleaseAge": null
     }
   ],
   "schedule": ["* * * * 1"],
