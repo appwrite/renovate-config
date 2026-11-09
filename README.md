@@ -37,9 +37,9 @@ Each repository also gets a Dependency Dashboard issue listing pending and rate-
 
 ## How it runs
 
-The `renovate` workflow runs daily at 06:00 UTC:
+The `renovate` workflow runs daily at 06:00 and 14:00 UTC. Weekly updates still only open on Mondays; the other runs open security PRs and rebase them, which Renovate does whenever one is behind its base branch:
 
-1. `plan` mints an app token per org, lists the repositories the app is installed on, drops archived repositories, forks (except those listed in `FORKS`) and exclusions (both in `.github/scripts/repositories.sh`), and splits the rest into chunks of 40.
+1. `plan` mints an app token per org, lists the repositories the app is installed on, drops archived repositories, forks (except those listed in `FORKS`) and exclusions (both in `.github/scripts/repositories.sh`), and splits the rest into chunks of 25.
 2. `renovate <org> <n>/<total>` runs Renovate on one chunk with its own token. An app token lasts one hour, so chunks keep each job well inside it, and a job stops at 55 minutes.
 
 The app's client ID and private key live in the `renovate` environment, which only `main` can deploy to, so a workflow edited on another branch cannot read them. An org without the app installed is skipped with a warning.
