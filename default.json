@@ -37,6 +37,9 @@
     "schedule": ["* * * * 1"]
   },
   "minimumReleaseAge": "7 days",
+  "constraints": {
+    "npm": "^11"
+  },
   "osvVulnerabilityAlerts": true,
   "dependencyDashboardOSVVulnerabilitySummary": "unresolved",
   "vulnerabilityAlerts": {
