@@ -57,7 +57,7 @@ org() {
 
 pr() {
   local repository=$1 number=$2 log="$1#$2"
-  local pull sha runs checks statuses ci pending unsuccessful status reviews blocked approver login permission verdict method major=false
+  local pull sha runs checks statuses ci pending unsuccessful status contexts reviews blocked approver login permission verdict method major=false
 
   pull=$(gh api "repos/$repository/pulls/$number")
   sha=$(jq -r '.head.sha' <<< "$pull")
@@ -96,7 +96,8 @@ pr() {
     echo "$log: skip, checks failed: $unsuccessful"; return
   fi
   if [ "$status" != 'success' ]; then
-    echo "$log: skip, commit status is $status"; return
+    contexts=$(jq -r --arg state "$status" '[.statuses[] | select(.state == $state or ($state == "failure" and .state == "error")) | .context] | unique | join(", ")' <<< "$statuses")
+    echo "$log: skip, ${contexts:-commit} status is $status"; return
   fi
 
   reviews=$(gh api --paginate --slurp "repos/$repository/pulls/$number/reviews?per_page=100" | jq '[.[][]]')
