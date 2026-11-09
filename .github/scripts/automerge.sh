@@ -101,8 +101,12 @@ pr() {
 
   reviews=$(gh api --paginate --slurp "repos/$repository/pulls/$number/reviews?per_page=100" | jq '[.[][]]')
   # A reviewer's standing verdict is their latest approval, change request or dismissal; comments do not change it.
-  blocked=$(jq -r '[.[] | select(.state == "APPROVED" or .state == "CHANGES_REQUESTED" or .state == "DISMISSED")]
-    | group_by(.user.login) | map(last | select(.state == "CHANGES_REQUESTED") | .user.login) | join(", ")' <<< "$reviews")
+  # The review bot's logins are one reviewer, and every review of its is a verdict, so its latest one stands.
+  blocked=$(jq -r --arg bots "$BOTS" '($bots | split(" ")) as $bots
+    | [.[] | (.user.login as $login | $bots | index($login) != null) as $bot
+      | select(.state == "APPROVED" or .state == "CHANGES_REQUESTED" or .state == "DISMISSED" or ($bot and .state == "COMMENTED"))
+      | .reviewer = (if $bot then $bots[0] else .user.login end)]
+    | group_by(.reviewer) | map(last | select(.state == "CHANGES_REQUESTED") | .reviewer) | join(", ")' <<< "$reviews")
   if [ -n "$blocked" ]; then
     echo "$log: skip, changes requested by $blocked"; return
   fi
