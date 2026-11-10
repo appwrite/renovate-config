@@ -10,7 +10,7 @@ set -euo pipefail
 EXCLUDED='appwrite/sdk-generator appwrite-labs/cluster-configuration-generator appwrite-labs/application-configuration'
 
 # Forks are skipped unless listed here; each opts in with forkProcessing in its renovate.json.
-FORKS='appwrite/grafana-oncall'
+FORKS='appwrite/grafana-oncall appwrite-labs/gcrunner'
 
 mirrors() {
   # Packages absorbed into appwrite/appwrite keep a utopia-php/<name> repository that
