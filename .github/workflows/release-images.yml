@@ -47,3 +47,129 @@ jobs:
           DRY_RUN: ${{ inputs.dryRun || false }}
           OWNER: ${{ matrix.owner }}
         run: .github/scripts/release-images.sh "$OWNER"
+
+  rebuild:
+    name: rebuild ${{ matrix.repository }}
+    needs: release
+    # A failed release job for one org must not hold back the rest.
+    if: ${{ !cancelled() }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    environment: renovate
+    strategy:
+      fail-fast: false
+      # Each build must run from a release or a tag. PUBLISHED is the image of the latest version
+      # tag; CANDIDATE replaces the local build where a release only promotes an image built on main.
+      matrix:
+        include:
+          - repository: appwrite/docker-browser
+            published: appwrite/browser:{tag}
+          - repository: appwrite/docker-geo
+            published: appwrite/geo:{tag}
+          - repository: appwrite/docker-base
+            published: appwrite/base:{tag}
+            target: final
+          - repository: appwrite/docker-postgres
+            published: appwrite/postgres:{tag}
+          - repository: appwrite/embedding
+            published: appwrite/embedding:{tag}
+          - repository: appwrite/exiftool
+            published: ghcr.io/appwrite/exiftool:{tag}
+          - repository: appwrite/autogravity
+            published: ghcr.io/appwrite/autogravity:{tag}
+          - repository: appwrite/grafana-oncall
+            published: ghcr.io/appwrite/grafana-oncall:{tag}
+            context: engine
+            target: prod
+            mode: tag
+          - repository: open-runtimes/executor
+            published: openruntimes/executor:{tag}
+          - repository: utopia-php/docker-base
+            published: appwrite/utopia-base:php-8.5-{tag}
+            candidate: appwrite/utopia-base:php-8.5-{sha}
+    env:
+      REPOSITORY: ${{ matrix.repository }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: plan
+        id: plan
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PUBLISHED: ${{ matrix.published }}
+          CANDIDATE: ${{ matrix.candidate || 'rebuild-candidate' }}
+        run: .github/scripts/rebuild-images.sh plan
+
+      - name: scan published image
+        id: published
+        if: steps.plan.outputs.skip != 'true'
+        env:
+          IMAGE: ${{ steps.plan.outputs.published }}
+        run: echo "count=$(.github/scripts/rebuild-images.sh count "$IMAGE")" >> "$GITHUB_OUTPUT"
+
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        if: steps.published.outputs.count && steps.published.outputs.count != '0' && steps.plan.outputs.candidate == 'rebuild-candidate'
+        with:
+          repository: ${{ matrix.repository }}
+          ref: ${{ steps.plan.outputs.head }}
+          path: source
+          persist-credentials: false
+
+      # No cache and a fresh base pull, so distro packages come from today's repositories.
+      - name: build head
+        if: steps.published.outputs.count && steps.published.outputs.count != '0' && steps.plan.outputs.candidate == 'rebuild-candidate'
+        env:
+          CONTEXT: source/${{ matrix.context || '.' }}
+          TARGET: ${{ matrix.target }}
+        run: docker build --pull --no-cache --platform linux/amd64 ${TARGET:+--target "$TARGET"} --tag rebuild-candidate "$CONTEXT"
+
+      - name: scan head
+        id: candidate
+        if: steps.published.outputs.count && steps.published.outputs.count != '0'
+        env:
+          IMAGE: ${{ steps.plan.outputs.candidate }}
+        run: echo "count=$(.github/scripts/rebuild-images.sh count "$IMAGE")" >> "$GITHUB_OUTPUT"
+
+      - name: decide
+        id: decide
+        if: steps.published.outputs.count
+        env:
+          TAG: ${{ steps.plan.outputs.tag }}
+          BEFORE: ${{ steps.published.outputs.count }}
+          AFTER: ${{ steps.candidate.outputs.count }}
+        run: |
+          if [ "$BEFORE" != '0' ] && [ "$AFTER" -lt "$BEFORE" ]; then
+            decision='release'
+            echo 'release=true' >> "$GITHUB_OUTPUT"
+          elif [ "$BEFORE" = '0' ]; then
+            decision='nothing to fix'
+          else
+            decision='rebuild does not help'
+          fi
+          echo "$REPOSITORY: $TAG has $BEFORE fixable, head ${AFTER:-not built}: $decision"
+          echo "| $REPOSITORY | $TAG | $BEFORE | $AFTER | $decision |" >> "$GITHUB_STEP_SUMMARY"
+
+      # Minted after the build so the build never runs while a token exists, and so it is fresh.
+      - name: generate app token
+        id: app-token
+        if: steps.decide.outputs.release == 'true'
+        uses: actions/create-github-app-token@64ab729a6294000f5aa4a4bc0b73d1f32bc45510 # v3.3.0
+        with:
+          client-id: ${{ vars.RENOVATE_APP_CLIENT_ID }}
+          private-key: ${{ secrets.RENOVATE_APP_PRIVATE_KEY }}
+          owner: ${{ steps.plan.outputs.owner }}
+          repositories: ${{ steps.plan.outputs.name }}
+          permission-contents: write
+
+      # An app token, because a release or tag made with the workflow's own token would not start the build.
+      - name: release
+        if: steps.decide.outputs.release == 'true'
+        env:
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
+          DRY_RUN: ${{ inputs.dryRun || false }}
+          HEAD: ${{ steps.plan.outputs.head }}
+          NEXT: ${{ steps.plan.outputs.next }}
+          MODE: ${{ matrix.mode || 'release' }}
+        run: .github/scripts/rebuild-images.sh release
