@@ -26,9 +26,19 @@
       "groupName": "docker base image digests"
     },
     {
-      "description": "A pin changes no code and has no release date, so the release age check would hold it forever.",
-      "matchUpdateTypes": ["pin", "pinDigest"],
+      "description": "Pins, digest refreshes and lock file maintenance change no code and have no release date, so the release age check would hold them forever.",
+      "matchUpdateTypes": ["pin", "pinDigest", "digest", "lockFileMaintenance"],
       "minimumReleaseAge": null
+    },
+    {
+      "description": "GHCR and some other registries publish no release timestamps, so a docker update from them would wait on the release age check forever; check the age only where a timestamp exists.",
+      "matchDatasources": ["docker"],
+      "minimumReleaseAgeBehaviour": "timestamp-optional"
+    },
+    {
+      "description": "Lock file maintenance carries the transitive fixes, so it goes ahead of the version update PRs the hourly limit would otherwise let through first.",
+      "matchUpdateTypes": ["lockFileMaintenance"],
+      "prPriority": 5
     }
   ],
   "schedule": ["* * * * 1"],
