@@ -26,11 +26,12 @@ Each repository also gets a Dependency Dashboard issue listing pending and rate-
 | `global.json` | Runner settings: extends the preset for every repository, turns off onboarding, enables `inheritConfig`, and lists the post-upgrade commands repositories may run. |
 | `.github/workflows/renovate.yml` | The runner. |
 | `.github/workflows/automerge.yml` | Merges approved Renovate PRs with green CI. |
-| `.github/workflows/release-images.yml` | Publishes patch releases of image repositories with Renovate updates. |
+| `.github/workflows/release-images.yml` | Publishes patch releases of image repositories with Renovate updates, or when a rebuild fixes vulnerabilities. |
 | `.github/workflows/report.yml` | Posts open security PRs and their blockers to #security. |
 | `.github/scripts/repositories.sh` | The repositories Renovate covers: exclusions, forks and split mirrors. Shared by both workflows. |
 | `.github/scripts/automerge.sh` | The auto-merge decision for one org or one PR. |
 | `.github/scripts/release-images.sh` | The release decision for image repositories, and the list of them. |
+| `.github/scripts/rebuild-images.sh` | Scans a fresh build against the latest release, and releases it when it fixes vulnerabilities. |
 | `.github/scripts/report.sh` | Collects, renders and posts the security PR report. |
 | `.github/workflows/validate.yml` | Validates the config files on every PR. |
 | `.github/workflows/verify.yml` | Reusable workflow that installs, builds and tests a repository without CI of its own. |
@@ -160,3 +161,7 @@ An image only picks up a new base when it is rebuilt, and image repositories onl
 - something outside `.github/` changed, because workflow updates don't change the image
 
 To add a repository, check that its build runs from a release or a tag, then add it to `REPOSITORIES`. Add its org to the workflow's matrix if it's a new one. Run **release-images** by hand with **dryRun** to see what it would do.
+
+Distro packages get security fixes without the base image digest moving, and packages from `apk add` or `apt-get install` never move it, so Renovate never rebuilds for them. The `rebuild` jobs in the same workflow build each image repository's default branch with no cache, scan it and the latest release's image with Trivy (fixable high and critical only), and publish the next patch release only when the build has fewer findings. A fix that needs a newer base never gets fewer, so it can't loop; it shows as "rebuild does not help" in the run summary. Where the repository's own workflow creates the release from a tag (`mode: tag`), it pushes the tag instead.
+
+To enrol a repository, check that its build runs from a release or a tag and that the final stage runs `apk upgrade --no-cache` or `apt-get upgrade -y`, then add it to the `rebuild` matrix with its published image.
